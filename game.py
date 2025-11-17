@@ -218,6 +218,48 @@ def on_drop_target_hit(target_num):
         drop_targets_down = [False, False, False, False]
         time.sleep(0.2)
 
+def show_start_screen():
+    blink = True
+    timer = 0
+    fade_surface = pygame.Surface((WIDTH, HEIGHT))
+    fade_surface.fill((0, 0, 0))
+
+    while True:
+        SCREEN.blit(rink_img, (0, 0))
+        SCREEN.blit(jumbo_img, (jumbo_x, jumbo_y))
+
+        # TITLE
+        title = medium_font.render("SHU PIONEER PINBALL", True, (255, 255, 255))
+        SCREEN.blit(title, (WIDTH//2 - title.get_width()//2, 260))
+
+        # BLINKING PRESS START
+        if blink:
+            txt = small_font.render("PRESS ENTER TO START", True, (255, 215, 0))
+            SCREEN.blit(txt, (WIDTH//2 - txt.get_width()//2, 300))
+
+        # Blink timer
+        timer += clock.get_time()
+        if timer > 500:  # blink every 0.5s
+            blink = not blink
+            timer = 0
+
+        pygame.display.flip()
+        clock.tick(60)
+        
+        # Input handling
+        for e in pygame.event.get():
+            if e.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if e.type == pygame.KEYDOWN and e.key == pygame.K_RETURN:
+                # Fade out
+                for alpha in range(0, 180, 6):
+                    fade_surface.set_alpha(alpha)
+                    SCREEN.blit(fade_surface, (0, 0))
+                    pygame.display.flip()
+                    clock.tick(60)
+                return
+
 
 def show_game_over_screen():
     fade_surface = pygame.Surface((WIDTH, HEIGHT))
@@ -260,6 +302,7 @@ def show_game_over_screen():
 
 # --- START MUSIC ---
 start_music()
+show_start_screen()
 
 # --- MAIN LOOP ---
 running = True
