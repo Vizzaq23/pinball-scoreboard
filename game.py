@@ -1,6 +1,6 @@
 # game.py
+import os
 import pygame, sys, time, threading
-
 from audio import start_music, play_sound
 from hardware import (
     targets_any,
@@ -19,9 +19,35 @@ from hardware import (
 )
 from assets import load_image, load_font
 
+# --- HIGH SCORE STORAGE (EEPROM-LIKE FILE) ---
+HIGH_SCORE_FILE = "pinball_highscore.txt"
+
+def load_high_score():
+    if os.path.exists(HIGH_SCORE_FILE):
+        try:
+            with open(HIGH_SCORE_FILE, "r") as f:
+                return int(f.read().strip())
+        except (ValueError, OSError):
+            return 0
+    return 0
+
+def save_high_score(score_value: int):
+    try:
+        with open(HIGH_SCORE_FILE, "w") as f:
+            f.write(str(score_value))
+    except OSError:
+        # If there's some file error, just ignore it so the game keeps running
+        pass
+
+def update_high_score():
+    global score, high_score
+    if score > high_score:
+        high_score = score
+        save_high_score(high_score)
+
 # --- INITIALIZE PYGAME ---
 pygame.init()
-WIDTH, HEIGHT = 1600, 1000
+WIDTH, HEIGHT = 1024, 768
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("SHU PIONEER ARENA")
 
@@ -42,6 +68,7 @@ medium_font = load_font(48, bold=True)
 
 # --- GAME STATE ---
 score = 0
+high_score = load_high_score()  # all-time saved high score
 balls_left = 2
 collected = 0  # PIONEER progress (0–7)
 mega_jackpot = False
@@ -69,7 +96,6 @@ def draw_dot_text(surface, text, x, y, color=(255, 255, 255), scale=2, spacing=3
             ):
                 pygame.draw.circle(surface, color, (x + px, y + py), 2)
 
-
 # --- PIONEER BULBS ---
 def draw_pioneer(surface, x, y, collected_count):
     word = "PIONEER"
@@ -78,7 +104,6 @@ def draw_pioneer(surface, x, y, collected_count):
             draw_dot_text(surface, letter, x + i * 70, y, (255, 215, 60), scale=2)
         else:
             draw_dot_text(surface, "•", x + i * 70, y, (120, 120, 60), scale=2)
-
 
 # --- DRAW EVERYTHING ---
 def draw_layout():
@@ -103,6 +128,18 @@ def draw_layout():
         (255, 255, 255),
         scale=3,
     )
+    
+       # High score (top right corner)
+    hs_text = f"HIGH SCORE: {high_score}"
+    hs_surface = small_font.render(hs_text, True, (255, 215, 0))
+
+#    position 20px from right, 20px from top
+    hs_x = WIDTH - hs_surface.get_width() - 20
+    hs_y = 20
+
+    SCREEN.blit(hs_surface, (hs_x, hs_y))
+
+    
 
     # PIONEER letters
     draw_pioneer(
@@ -145,32 +182,30 @@ def draw_layout():
                 1,
             )
 
-
 # --- SCORING LOGIC ---
 last_hit = 0
 HIT_COOLDOWN = 0.4
-
 
 def on_target_hit():
     global last_hit, score
     now = time.time()
     if now - last_hit >= HIT_COOLDOWN:
         score += 500
+        update_high_score()
         last_hit = now
         print("🎯 Target hit! +500")
         play_sound("hit")
 
-
 last_bumper_hit = {1: 0, 2: 0}
 BUMPER_COOLDOWN = 0.3
 PULSE_TIME = 0.1
-
 
 def on_bumper_hit(bumper_id):
     global last_bumper_hit, score
     now = time.time()
     if now - last_bumper_hit[bumper_id] >= BUMPER_COOLDOWN:
         score += 100
+        update_high_score()
         last_bumper_hit[bumper_id] = now
         print(f" Bumper {bumper_id} hit! +100")
         play_sound("bumper")
@@ -179,10 +214,10 @@ def on_bumper_hit(bumper_id):
             target=pulse_solenoid, args=(gate, PULSE_TIME), daemon=True
         ).start()
 
-
 def on_goal_scored():
     global collected, score, mega_jackpot
     score += 2000  # goals are big points
+    update_high_score()
     if collected < len("PIONEER"):
         collected += 1
 
@@ -193,12 +228,12 @@ def on_goal_scored():
     if collected == len("PIONEER"):
         mega_jackpot = True
         score += 10000
+        update_high_score()
         print("💥 MEGA JACKPOT!")
         play_sound("jackpot")
         # Reset letters & jackpot flag so player can re-earn
         collected = 0
         mega_jackpot = False
-
 
 def on_drop_target_hit(target_num):
     global drop_targets_down
@@ -232,10 +267,14 @@ def show_start_screen():
         title = medium_font.render("SHU PIONEER PINBALL", True, (255, 255, 255))
         SCREEN.blit(title, (WIDTH//2 - title.get_width()//2, 260))
 
+        # Show current all-time high score on start screen
+        hs_txt = small_font.render(f"ALL-TIME HIGH SCORE: {high_score}", True, (255, 215, 0))
+        SCREEN.blit(hs_txt, (WIDTH//2 - hs_txt.get_width()//2, 300))
+
         # BLINKING PRESS START
         if blink:
             txt = small_font.render("PRESS ENTER TO START", True, (255, 215, 0))
-            SCREEN.blit(txt, (WIDTH//2 - txt.get_width()//2, 300))
+            SCREEN.blit(txt, (WIDTH//2 - txt.get_width()//2, 340))
 
         # Blink timer
         timer += clock.get_time()
@@ -260,7 +299,6 @@ def show_start_screen():
                     clock.tick(60)
                 return
 
-
 def show_game_over_screen():
     fade_surface = pygame.Surface((WIDTH, HEIGHT))
     fade_surface.fill((0, 0, 0))
@@ -277,12 +315,23 @@ def show_game_over_screen():
             text, (WIDTH // 2 - text.get_width() // 2, 200)
         )
 
+        # Show final score and high score
+        final_txt = small_font.render(f"FINAL SCORE: {score}", True, (255, 255, 255))
+        SCREEN.blit(
+            final_txt, (WIDTH // 2 - final_txt.get_width() // 2, 260)
+        )
+
+        hs_txt = small_font.render(f"ALL-TIME HIGH: {high_score}", True, (255, 215, 0))
+        SCREEN.blit(
+            hs_txt, (WIDTH // 2 - hs_txt.get_width() // 2, 295)
+        )
+
         # Press Enter prompt
         prompt = small_font.render(
             "PRESS ENTER TO RESTART", True, (255, 255, 255)
         )
         SCREEN.blit(
-            prompt, (WIDTH // 2 - prompt.get_width() // 2, 300)
+            prompt, (WIDTH // 2 - prompt.get_width() // 2, 340)
         )
 
         SCREEN.blit(fade_surface, (0, 0))
@@ -298,7 +347,6 @@ def show_game_over_screen():
                 sys.exit()
             if e.type == pygame.KEYDOWN and e.key == pygame.K_RETURN:
                 waiting = False
-
 
 # --- START MUSIC ---
 start_music()
@@ -325,6 +373,7 @@ while running:
                 if collected == len("PIONEER"):
                     mega_jackpot = True
                     score += 10000
+                    update_high_score()
                     play_sound("jackpot")
                     collected = 0
                     mega_jackpot = False
@@ -332,6 +381,7 @@ while running:
                 balls_left -= 1
                 print(f"Ball drained, balls_left = {balls_left}")
             elif e.key == pygame.K_r:
+                # reset current game, but keep high score
                 score, balls_left, collected, mega_jackpot = 0, 2, 0, False
             elif e.key == pygame.K_d:
                 debug_mode = not debug_mode
@@ -381,7 +431,7 @@ while running:
         print("💀 GAME OVER — resetting")
         show_game_over_screen()
 
-        # Reset full game state AFTER screen
+        # Reset full game state AFTER screen (high_score is kept)
         score = 0
         balls_left = 2
         collected = 0
