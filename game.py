@@ -500,14 +500,7 @@ while running:
             on_ball_drained()
         ball_drain_last_state = current_drain_pressed
 
-    # ----------------------------------------
-    # OPTIONAL: Keyboard test for hit using ENTER
-    # ----------------------------------------
-    keys = pygame.key.get_pressed()
-    if keys[pygame.K_RETURN]:
-        on_target_hit()
-        pygame.time.wait(200)
-
+ 
     # ----------------------------------------
     # GAME OVER CHECK
     # ----------------------------------------
