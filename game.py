@@ -16,7 +16,6 @@ from hardware import (
     target1,
     target2,
     target3,
-    target4,
     goal_sensor,
     jackpot_gate,
     USE_GPIO,
@@ -100,7 +99,11 @@ debug_mode: bool = False
 
 # Drop target state: each index = one physical drop
 # False = up, True = down
-drop_targets_down = [False, False, False, False]
+DROP_TARGET_COUNT = 3
+DROP_RESET_PULSE_TIME = 0.25
+drop_targets_down = [False] * DROP_TARGET_COUNT
+drop_targets_last_pressed = [False] * DROP_TARGET_COUNT
+drop_bank_completed = False
 
 # For debouncing / cooldowns
 last_hit = 0.0
@@ -283,25 +286,23 @@ def on_goal_scored():
 
 
 def on_drop_target_hit(target_num: int):
-    """Handle one of the 4 drop targets being hit."""
-    global drop_targets_down
+    """Handle one of the 3 drop targets being hit."""
+    global drop_targets_down, drop_bank_completed
 
     idx = target_num - 1
     if not drop_targets_down[idx]:
         drop_targets_down[idx] = True
         print(f"🔽 Drop Target {target_num} DOWN!")
 
-    # If all 4 targets are down -> fire reset solenoid and reset state
-    if all(drop_targets_down):
+    # If all 3 targets are down -> fire reset solenoid ONCE, then wait for any target to come back up
+    if all(drop_targets_down) and not drop_bank_completed:
+        drop_bank_completed = True
         print("🔄 All drop targets down! Resetting bank...")
         threading.Thread(
             target=pulse_solenoid,
-            args=(jackpot_gate, 0.25),
+            args=(jackpot_gate, DROP_RESET_PULSE_TIME),
             daemon=True,
         ).start()
-        # Reset for next cycle
-        drop_targets_down = [False, False, False, False]
-        time.sleep(0.2)
 
 
 def on_ball_drained():
@@ -473,21 +474,29 @@ while running:
             on_bumper_hit(2)
             time.sleep(0.1)
 
-        if target1.is_pressed:
-            on_drop_target_hit(1)
-            time.sleep(0.1)
+        # --- DROP TARGET BANK (3 targets) ---
+        # Edge-detect each target so holding a target down doesn't spam events.
+        # With pull_up=True, a closed switch reads LOW -> is_pressed=True.
+        current_drop_pressed = [
+            target1.is_pressed,
+            target2.is_pressed,
+            target3.is_pressed,
+        ]
 
-        if target2.is_pressed:
-            on_drop_target_hit(2)
-            time.sleep(0.1)
+        for i, pressed in enumerate(current_drop_pressed, start=1):
+            if pressed and not drop_targets_last_pressed[i - 1]:
+                on_drop_target_hit(i)
 
-        if target3.is_pressed:
-            on_drop_target_hit(3)
-            time.sleep(0.1)
+        # Track "up" transitions too, so the bank can be completed again after a reset
+        for i, pressed in enumerate(current_drop_pressed, start=1):
+            if (not pressed) and drop_targets_last_pressed[i - 1]:
+                drop_targets_down[i - 1] = False
 
-        if target4.is_pressed:
-            on_drop_target_hit(4)
-            time.sleep(0.1)
+        # Re-arm completion once any target is back up
+        if drop_bank_completed and not all(current_drop_pressed):
+            drop_bank_completed = False
+
+        drop_targets_last_pressed = current_drop_pressed
 
         if goal_sensor.is_pressed:
             on_goal_scored()

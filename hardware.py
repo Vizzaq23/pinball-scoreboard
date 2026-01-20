@@ -21,17 +21,15 @@ try:
     gate2 = DigitalOutputDevice(BUMPER2_GATE, active_high=True, initial_value=False)
 
     # ---------------------------------------------
-    # 4 TARGET DROP BANK (for JACKPOT sequence)
+    # 3 TARGET DROP BANK (reset when all 3 are down)
     # ---------------------------------------------
     TARGET1_PIN = 12
     TARGET2_PIN = 13
     TARGET3_PIN = 16
-    TARGET4_PIN = 19
 
     target1 = Button(TARGET1_PIN, pull_up=True, bounce_time=0.1)
     target2 = Button(TARGET2_PIN, pull_up=True, bounce_time=0.1)
     target3 = Button(TARGET3_PIN, pull_up=True, bounce_time=0.1)
-    target4 = Button(TARGET4_PIN, pull_up=True, bounce_time=0.1)
 
     # GOAL SENSOR BEHIND THE TARGETS
     GOAL_PIN = 20
@@ -77,7 +75,6 @@ except Exception as e:
     target1 = MockButton()
     target2 = MockButton()
     target3 = MockButton()
-    target4 = MockButton()
     goal_sensor = MockButton()
     ball_drain = MockButton()
 
