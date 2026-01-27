@@ -541,10 +541,6 @@ def run_test_mode():
     # Solenoid safety cooldowns
     last_solenoid_fire = {i: 0.0 for i in range(len(SOLENOID_LIST))}
 
-    # Simple debounce for treating bumpers as "flipper" navigation in test mode
-    last_flipper_nav = 0.0
-    FLIPPER_NAV_COOLDOWN = 0.25
-
     running = True
     while running:
         now = time.time()
@@ -604,16 +600,6 @@ def run_test_mode():
                 elif screens[screen_index] == "DISPLAY TEST":
                     if e.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_SPACE):
                         display_pattern = (display_pattern + 1) % 4
-
-        # ---- Hardware-based navigation (treat bumpers as flippers) ----
-        if USE_GPIO:
-            if now - last_flipper_nav >= FLIPPER_NAV_COOLDOWN:
-                if bumper1.is_pressed:
-                    screen_index = (screen_index - 1) % len(screens)
-                    last_flipper_nav = now
-                elif bumper2.is_pressed:
-                    screen_index = (screen_index + 1) % len(screens)
-                    last_flipper_nav = now
 
         # ---- Rendering per screen ----
         current_title = screens[screen_index]
@@ -714,7 +700,7 @@ def run_test_mode():
 
         # Footer with navigation help
         footer = small_font.render(
-            "LEFT/RIGHT or Bumpers = Change Screen   ESC = Exit Test Mode",
+            "LEFT/RIGHT = Change Screen   ESC = Exit Test Mode",
             True,
             (220, 220, 220),
         )
