@@ -21,7 +21,7 @@ try:
     gate2 = DigitalOutputDevice(BUMPER2_GATE, active_high=True, initial_value=False)
 
     # ---------------------------------------------
-    # 3 TARGET DROP BANK (reset when all 3 are down)
+    # 3 TARGET DROP BANK (for JACKPOT sequence)
     # ---------------------------------------------
     TARGET1_PIN = 12
     TARGET2_PIN = 13
@@ -45,7 +45,14 @@ try:
 
     # Solenoid to reset the drop target bank
     JACKPOT_RESET_GATE = 26
-    jackpot_gate = DigitalOutputDevice(JACKPOT_RESET_GATE, active_high=True, initial_value=False)
+    jackpot_gate = DigitalOutputDevice(
+        JACKPOT_RESET_GATE, active_high=True, initial_value=False
+    )
+
+    # Dedicated service button to enter TEST MODE (optional hardware)
+    # Wire a momentary switch between this pin and GND.
+    SERVICE_BUTTON_PIN = 21
+    service_button = Button(SERVICE_BUTTON_PIN, pull_up=True, bounce_time=0.15)
 
     USE_GPIO = True
 
@@ -77,6 +84,7 @@ except Exception as e:
     target3 = MockButton()
     goal_sensor = MockButton()
     ball_drain = MockButton()
+    service_button = MockButton()
 
     gate1 = MockGate()
     gate2 = MockGate()
