@@ -23,6 +23,7 @@ from hardware import (
     ball_drain,
     pulse_solenoid,
     service_button,
+    initialize_all_gates,
 )
 from assets import load_image, load_font
 
@@ -831,6 +832,10 @@ def render_frame():
 # ============================================================
 # MAIN GAME LOOP
 # ============================================================
+
+# Initialize all solenoid gates to OFF state before starting
+# This prevents solenoids from firing when 24V power turns on
+initialize_all_gates()
 
 # Start background music and show start screen once
 start_music()
