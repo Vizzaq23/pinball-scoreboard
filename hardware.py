@@ -15,6 +15,7 @@ try:
     BUMPER1_GATE = 5
     BUMPER2_GATE = 6
 
+
     bumper1 = Button(BUMPER1_PIN, pull_up=True, bounce_time=0.1)
     bumper2 = Button(BUMPER2_PIN, pull_up=True, bounce_time=0.1)
     # Initialize gates with explicit OFF state to prevent firing on boot
@@ -30,20 +31,22 @@ try:
     TARGET1_PIN = 12
     TARGET2_PIN = 13
     TARGET3_PIN = 16
+    DROP_TARGET_GATE = 19
 
     target1 = Button(TARGET1_PIN, pull_up=True, bounce_time=0.1)
     target2 = Button(TARGET2_PIN, pull_up=True, bounce_time=0.1)
     target3 = Button(TARGET3_PIN, pull_up=True, bounce_time=0.1)
 
+    drop_target_gate = DigitalOutputDevice(
+        DROP_TARGET_GATE, active_high=True, initial_value=False
+    )
+    drop_target_gate.off()
+
     # GOAL SENSOR BEHIND THE TARGETS
     GOAL_PIN = 20
     goal_sensor = Button(GOAL_PIN, pull_up=True, bounce_time=0.15)
 
-    # BALL DRAIN / TROUGH SENSOR
-    # Wire one side of the switch to GND, the other to this pin.
-    # With pull_up=True:
-    #   - ball sitting in drain (switch closed)  → LOW  → is_pressed = True
-    #   - no ball (switch open)                  → HIGH → is_pressed = False
+
     BALL_DRAIN_PIN = 24
     ball_drain = Button(BALL_DRAIN_PIN, pull_up=True, bounce_time=0.1)
 
@@ -94,6 +97,7 @@ except Exception as e:
 
     gate1 = MockGate()
     gate2 = MockGate()
+    drop_target_gate = MockGate()
     jackpot_gate = MockGate()
 
 
@@ -108,6 +112,7 @@ def initialize_all_gates():
     if USE_GPIO:
         gate1.off()
         gate2.off()
+        drop_target_gate.off()
         jackpot_gate.off()
         print("✅ All solenoid gates initialized to OFF state")
 
