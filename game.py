@@ -24,6 +24,7 @@ from hardware import (
     pulse_solenoid,
     service_button,
     initialize_all_gates,
+    col,  # Column drive for 3‑target bank (Arduino colPin equivalent)
 )
 from assets import load_image, load_font
 
@@ -126,6 +127,11 @@ PULSE_TIME = 0.1
 
 # Track previous state of the drain switch to detect edges
 ball_drain_last_state: bool = False
+
+# Track previous state of each drop-target switch (edge detection like Arduino s1/s1_last)
+target1_last_state: bool = False
+target2_last_state: bool = False
+target3_last_state: bool = False
 
 # For uptime / status display
 program_start_time = time.time()
@@ -332,14 +338,38 @@ def on_goal_scored():
         mega_jackpot = False
 
 
-def on_drop_target_hit(target_num: int):
-    """Handle one of the 3 drop targets being hit."""
+def on_drop_target_hit():
+    """Scan and handle the 3 drop targets"""
     global drop_targets_down
+    global target1_last_state, target2_last_state, target3_last_state
 
-    idx = target_num - 1
-    if not drop_targets_down[idx]:
-        drop_targets_down[idx] = True
-        print(f"🔽 Drop Target {target_num} DOWN!")
+    # Read current switch states (rows)
+    s1 = target1.is_pressed
+    s2 = target2.is_pressed
+    s3 = target3.is_pressed
+
+    # Target 1: 
+    if s1 and not target1_last_state:
+        if not drop_targets_down[0]:
+            drop_targets_down[0] = True
+            print("🔽 Drop Target 1 DOWN!")
+
+    # Target 2
+    if s2 and not target2_last_state:
+        if not drop_targets_down[1]:
+            drop_targets_down[1] = True
+            print("🔽 Drop Target 2 DOWN!")
+
+    # Target 3
+    if s3 and not target3_last_state:
+        if not drop_targets_down[2]:
+            drop_targets_down[2] = True
+            print("🔽 Drop Target 3 DOWN!")
+
+    # Remember last states (like s1_last = s1, etc. in Arduino)
+    target1_last_state = s1
+    target2_last_state = s2
+    target3_last_state = s3
 
     # If all 3 targets are down -> fire reset solenoid and reset state
     if all(drop_targets_down):
@@ -359,9 +389,49 @@ def on_ball_drained():
     global balls_left
     if balls_left > 0:
         balls_left -= 1
-    print(f"🎱 Ball drained (hardware), balls_left = {balls_left}")
+    print(f" Ball drained (hardware), balls_left = {balls_left}")
     # Optional: if you add a "drain" sound:
     # play_sound("drain")
+
+
+def poll_hardware_inputs():
+    """Read physical GPIO inputs and trigger their handlers (hardware events)."""
+    global ball_drain_last_state
+
+    if not USE_GPIO:
+        return
+
+    # "Activate" the column each scan (Arduino: digitalWrite(colPin, LOW);)
+    col.on()
+
+    # Strike plate / main target (simple level read with a short cooldown inside handler)
+    if targets_any.is_pressed:
+        on_target_hit()
+        time.sleep(0.25)
+
+    # Bumpers (simple reads; cooldown handled in on_bumper_hit)
+    if bumper1.is_pressed:
+        on_bumper_hit(1)
+        time.sleep(0.1)
+
+    if bumper2.is_pressed:
+        on_bumper_hit(2)
+        time.sleep(0.1)
+
+    # Drop targets: scan & handle all 3 inside on_drop_target_hit()
+    on_drop_target_hit()
+
+    # Goal sensor can remain level‑based with a small delay
+    if goal_sensor.is_pressed:
+        on_goal_scored()
+        time.sleep(0.3)
+
+    # --- BALL DRAIN SENSOR ---
+    # Detect a new press (ball arriving in trough)
+    current_drain_pressed = ball_drain.is_pressed
+    if current_drain_pressed and not ball_drain_last_state:
+        on_ball_drained()
+    ball_drain_last_state = current_drain_pressed
 
 
 # ============================================================
@@ -754,49 +824,6 @@ def handle_pygame_events() -> bool:
                 debug_mode = not debug_mode
 
     return True
-
-
-def poll_hardware_inputs():
-    """Read physical GPIO inputs and trigger their handlers."""
-    global ball_drain_last_state
-
-    if not USE_GPIO:
-        return
-
-    if targets_any.is_pressed:
-        on_target_hit()
-        time.sleep(0.25)
-
-    if bumper1.is_pressed:
-        on_bumper_hit(1)
-        time.sleep(0.1)
-
-    if bumper2.is_pressed:
-        on_bumper_hit(2)
-        time.sleep(0.1)
-
-    if target1.is_pressed:
-        on_drop_target_hit(1)
-        time.sleep(0.1)
-
-    if target2.is_pressed:
-        on_drop_target_hit(2)
-        time.sleep(0.1)
-
-    if target3.is_pressed:
-        on_drop_target_hit(3)
-        time.sleep(0.1)
-
-    if goal_sensor.is_pressed:
-        on_goal_scored()
-        time.sleep(0.3)
-
-    # --- BALL DRAIN SENSOR ---
-    # Detect a new press (ball arriving in trough)
-    current_drain_pressed = ball_drain.is_pressed
-    if current_drain_pressed and not ball_drain_last_state:
-        on_ball_drained()
-    ball_drain_last_state = current_drain_pressed
 
 
 def handle_keyboard_test_hit():

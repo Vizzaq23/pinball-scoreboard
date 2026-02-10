@@ -34,12 +34,6 @@ try:
 
     # ---------------------------------------------
     # 3‑TARGET DROP BANK (for JACKPOT sequence)
-    #
-    # Mapping vs. Arduino sketch:
-    # - TARGET1_PIN/2/3 ~= rowPins[] (three opto receivers / switches)
-    # - COL_PIN / col   ~= colPin    (IR LED column drive, if used)
-    # The game logic that waits for all three down and fires the
-    # reset solenoid lives in game.py (on_drop_target_hit / jackpot_gate).
     # ---------------------------------------------
     TARGET1_PIN = 12
     TARGET2_PIN = 13
@@ -50,10 +44,6 @@ try:
     target2 = Button(TARGET2_PIN, pull_up=True, bounce_time=0.1)
     target3 = Button(TARGET3_PIN, pull_up=True, bounce_time=0.1)
 
-    # Column driver for the opto LEDs on the drop‑target bank.
-    # If your A‑13609 board has its IR LEDs powered from 5V directly,
-    # you may leave this effectively unused; if instead you run the
-    # column from a GPIO‑controlled transistor, this is the control line.
     col = DigitalOutputDevice(
         COL_PIN,
         active_high=True,
