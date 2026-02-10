@@ -6,10 +6,15 @@ try:
     from gpiozero import Button, DigitalOutputDevice
     print("✅ GPIO detected: running on Raspberry Pi hardware.")
 
-    # STRIKE PLATE
+    # -----------------------------
+    # STRIKE PLATE / MAIN TARGET
+    # -----------------------------
+    # Equivalent to a "standup" switch in the playfield.
     targets_any = Button(17, pull_up=True, bounce_time=0.15)
 
-    # BUMPERS (2 inputs + 2 solenoid gates)
+    # -----------------------------
+    # BUMPERS (2 inputs + 2 gates)
+    # -----------------------------
     BUMPER1_PIN = 22
     BUMPER2_PIN = 23
     BUMPER1_GATE = 5
@@ -18,7 +23,9 @@ try:
 
     bumper1 = Button(BUMPER1_PIN, pull_up=True, bounce_time=0.1)
     bumper2 = Button(BUMPER2_PIN, pull_up=True, bounce_time=0.1)
-    # Initialize gates with explicit OFF state to prevent firing on boot
+
+    # Initialize bumper solenoid gates with explicit OFF state
+    # to prevent firing on boot.
     gate1 = DigitalOutputDevice(BUMPER1_GATE, active_high=True, initial_value=False)
     gate2 = DigitalOutputDevice(BUMPER2_GATE, active_high=True, initial_value=False)
     # Explicitly ensure gates are OFF immediately after initialization
@@ -26,23 +33,35 @@ try:
     gate2.off()
 
     # ---------------------------------------------
-    # 3 TARGET DROP BANK (for JACKPOT sequence)
+    # 3‑TARGET DROP BANK (for JACKPOT sequence)
+    #
+    # Mapping vs. Arduino sketch:
+    # - TARGET1_PIN/2/3 ~= rowPins[] (three opto receivers / switches)
+    # - COL_PIN / col   ~= colPin    (IR LED column drive, if used)
+    # The game logic that waits for all three down and fires the
+    # reset solenoid lives in game.py (on_drop_target_hit / jackpot_gate).
     # ---------------------------------------------
     TARGET1_PIN = 12
     TARGET2_PIN = 13
     TARGET3_PIN = 16
-    DROP_TARGET_GATE = 19
+    COL_PIN = 19  # optional: drives common IR LED column
 
     target1 = Button(TARGET1_PIN, pull_up=True, bounce_time=0.1)
     target2 = Button(TARGET2_PIN, pull_up=True, bounce_time=0.1)
     target3 = Button(TARGET3_PIN, pull_up=True, bounce_time=0.1)
 
-    drop_target_gate = DigitalOutputDevice(
-        DROP_TARGET_GATE, active_high=True, initial_value=False
+    # Column driver for the opto LEDs on the drop‑target bank.
+    # If your A‑13609 board has its IR LEDs powered from 5V directly,
+    # you may leave this effectively unused; if instead you run the
+    # column from a GPIO‑controlled transistor, this is the control line.
+    col = DigitalOutputDevice(
+        COL_PIN,
+        active_high=True,
+        initial_value=False,
     )
-    drop_target_gate.off()
+    col.off()
 
-    # GOAL SENSOR BEHIND THE TARGETS
+    # GOAL SENSOR BEHIND THE DROP TARGETS
     GOAL_PIN = 20
     goal_sensor = Button(GOAL_PIN, pull_up=True, bounce_time=0.15)
 
@@ -50,7 +69,8 @@ try:
     BALL_DRAIN_PIN = 24
     ball_drain = Button(BALL_DRAIN_PIN, pull_up=True, bounce_time=0.1)
 
-    # Solenoid to reset the drop target bank
+    # Solenoid to reset the drop‑target bank (used by game.py when
+    # all three drop targets are down).
     JACKPOT_RESET_GATE = 26
     jackpot_gate = DigitalOutputDevice(
         JACKPOT_RESET_GATE, active_high=True, initial_value=False
@@ -97,24 +117,19 @@ except Exception as e:
 
     gate1 = MockGate()
     gate2 = MockGate()
-    drop_target_gate = MockGate()
+    col = MockGate()
     jackpot_gate = MockGate()
 
 
 # --- INITIALIZATION FUNCTION ---
 def initialize_all_gates():
-    """Ensure all solenoid gates are OFF at startup.
     
-    IMPORTANT: If solenoids fire immediately when 24V power turns on,
-    you need a hardware pull-down resistor (10kΩ) on each MOSFET gate pin
-    to ground. This prevents the gate from floating during boot.
-    """
     if USE_GPIO:
         gate1.off()
         gate2.off()
-        drop_target_gate.off()
+        col.off()
         jackpot_gate.off()
-        print("✅ All solenoid gates initialized to OFF state")
+        print(" All solenoid gates initialized to OFF state")
 
 
 # --- SOLENOID PULSE FUNCTION ---
