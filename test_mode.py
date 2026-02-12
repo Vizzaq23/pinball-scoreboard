@@ -1,6 +1,7 @@
 # test_mode.py - Service / diagnostics (TEST MODE) for pinball scoreboard.
 
 import os
+import sys
 import time
 import threading
 from dataclasses import dataclass
@@ -111,7 +112,9 @@ def _draw_header(ctx: TestModeContext, title: str, subtitle: str = "") -> None:
 
 
 def _get_cpu_temperature() -> str:
-    """Best-effort CPU temperature readout (Raspberry Pi). Returns e.g. '47.8 C' or 'N/A'."""
+    """Best-effort CPU temperature (Raspberry Pi only). On Windows/other OS returns 'N/A'."""
+    if sys.platform != "linux":
+        return "N/A"
     try:
         out = os.popen("vcgencmd measure_temp").read().strip()
         if out.startswith("temp="):
