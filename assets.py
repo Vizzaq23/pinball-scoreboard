@@ -1,70 +1,54 @@
-# assets.py
-import pygame
+# assets.py - Load images, sounds, and fonts from the assets directory.
+
 import os
+from typing import Optional
+
+import pygame
 
 ASSET_DIR = "assets"
 
 
-# -----------------------------
-# PNG-SAFE IMAGE LOADER
-# -----------------------------
-def load_image(filename, scale=None, alpha=True):
+def load_image(
+    filename: str,
+    scale: Optional[tuple[int, int]] = None,
+) -> Optional[pygame.Surface]:
     """
-    Loads an image and automatically chooses convert_alpha() ONLY if
-    the image actually contains transparency.
-    This prevents black backgrounds on PNGs like the rink.
+    Load an image from ASSET_DIR. Uses convert_alpha() for PNGs with
+    transparency so the rink and other PNGs don't get a black background.
     """
     path = os.path.join(ASSET_DIR, filename)
-
     try:
         img = pygame.image.load(path)
     except Exception as e:
         print(f"⚠️ Failed to load image '{path}': {e}")
         return None
 
-    # Detect if PNG has transparency
     has_alpha = False
     if filename.lower().endswith(".png"):
         try:
-            # Check if image has per-pixel alpha
-            if img.get_alpha() is not None:
+            if img.get_alpha() is not None or (img.get_flags() & pygame.SRCALPHA):
                 has_alpha = True
-            else:
-                # Check if image has a colorkey or palette alpha
-                if img.get_flags() & pygame.SRCALPHA:
-                    has_alpha = True
-        except:
+        except Exception:
             pass
 
-    # Convert properly
-    if has_alpha:
-        img = img.convert_alpha()
-    else:
-        img = img.convert()
-
-    # Scale AFTER conversion
+    img = img.convert_alpha() if has_alpha else img.convert()
     if scale:
         img = pygame.transform.smoothscale(img, scale)
-
     return img
 
 
-# -----------------------------
-# SOUND LOADER
-# -----------------------------
-def load_sound(filename, volume=1.0):
+def load_sound(filename: str, volume: float = 1.0) -> Optional[pygame.mixer.Sound]:
+    """Load a sound from ASSET_DIR and set volume. Returns None on failure."""
     path = os.path.join(ASSET_DIR, filename)
     try:
-        s = pygame.mixer.Sound(path)
-        s.set_volume(volume)
-        return s
+        sound = pygame.mixer.Sound(path)
+        sound.set_volume(volume)
+        return sound
     except Exception as e:
         print(f"⚠️ Failed to load sound '{path}': {e}")
         return None
 
 
-# -----------------------------
-# FONT LOADER
-# -----------------------------
-def load_font(size, bold=False):
+def load_font(size: int, bold: bool = False) -> pygame.font.Font:
+    """Return Courier New system font at given size."""
     return pygame.font.SysFont("Courier New", size, bold=bold)

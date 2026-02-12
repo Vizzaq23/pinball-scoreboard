@@ -1,10 +1,15 @@
-# hardware.py
-import time
+# hardware.py - GPIO inputs and outputs for Raspberry Pi pinball hardware.
+# Falls back to mocks when GPIO is not available (e.g. on Windows).
 
-# --- GPIO SETUP (cross-platform safe) ---
+import time
+from typing import Any
+
+# ---------------------------------------------------------------------------
+# GPIO setup (cross-platform safe)
+# ---------------------------------------------------------------------------
 try:
     from gpiozero import Button, DigitalOutputDevice
-    print("✅ GPIO detected: running on Raspberry Pi hardware.")
+    print("GPIO detected: running on Raspberry Pi hardware.")
 
     # -----------------------------
     # STRIKE PLATE / MAIN TARGET
@@ -76,7 +81,7 @@ try:
     USE_GPIO = True
 
 except Exception as e:
-    print(f"⚠️ GPIO not available ({e}). Using mock mode for testing.")
+    print(f"GPIO not available ({e}). Using mock mode for testing.")
     USE_GPIO = False
 
     class MockButton:
@@ -111,21 +116,22 @@ except Exception as e:
     jackpot_gate = MockGate()
 
 
-# --- INITIALIZATION FUNCTION ---
-def initialize_all_gates():
-    
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def initialize_all_gates() -> None:
+    """Ensure all solenoid gates are off (safe state at startup)."""
     if USE_GPIO:
         gate1.off()
         gate2.off()
         col.off()
         jackpot_gate.off()
-        print(" All solenoid gates initialized to OFF state")
 
 
-# --- SOLENOID PULSE FUNCTION ---
-def pulse_solenoid(gate, pulse_time):
-    print(f"[SOLENOID] ON {gate} for {pulse_time}s")
+def pulse_solenoid(gate: Any, pulse_time: float) -> None:
+    """Turn gate on for pulse_time seconds, then off."""
     gate.on()
     time.sleep(pulse_time)
     gate.off()
-    print(f"[SOLENOID] OFF {gate}")

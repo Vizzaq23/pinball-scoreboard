@@ -1,38 +1,75 @@
-# game.py
+# game.py - SHU Pioneer Arena pinball scoreboard main game loop.
+"""Attract mode, gameplay, high score, and hardware polling. Test/diagnostics live in test_mode.py."""
+
 import os
 import sys
 import time
 import threading
 from enum import Enum, auto
-
 import pygame
 
-from audio import start_music, play_sound
+from assets import load_font, load_image
+from audio import play_sound, start_music
 from hardware import (
-    targets_any,
+    USE_GPIO,
+    ball_drain,
     bumper1,
     bumper2,
+    col,
     gate1,
     gate2,
+    goal_sensor,
+    initialize_all_gates,
+    jackpot_gate,
+    pulse_solenoid,
+    service_button,
     target1,
     target2,
     target3,
-    goal_sensor,
-    jackpot_gate,
-    USE_GPIO,
-    ball_drain,
-    pulse_solenoid,
-    service_button,
-    initialize_all_gates,
-    col,  # Column drive for 3‑target bank (Arduino colPin equivalent)
+    targets_any,
 )
-from assets import load_image, load_font
+from test_mode import TestModeContext, run_test_mode
+
+# ============================================================
+# CONSTANTS
+# ============================================================
+
+HIGH_SCORE_FILE = "pinball_highscore.txt"
+
+# Display
+SCREEN_WIDTH = 1024
+SCREEN_HEIGHT = 768
+FPS = 60
+
+# Jumbotron layout
+JUMBO_SCALE = (800, 600)
+JUMBO_TOP = 50
+CUTOUT_WIDTH, CUTOUT_HEIGHT = 460, 140
+CUTOUT_OFFSET_Y = 60
+
+# Scoring
+POINTS_TARGET_HIT = 500
+POINTS_BUMPER = 100
+POINTS_GOAL = 2000
+POINTS_MEGA_JACKPOT = 10_000
+
+# Timing (seconds)
+HIT_COOLDOWN = 0.4
+BUMPER_COOLDOWN = 0.3
+SOLENOID_PULSE_TIME = 0.1
+JACKPOT_GATE_PULSE_TIME = 0.25
+DROP_TARGET_RESET_DELAY = 0.2
+BLINK_INTERVAL_MS = 500
+FADE_STEP_START = 6
+FADE_STEP_GAME_OVER = 5
+
+# Game state
+INITIAL_BALLS = 2
+PIONEER_LETTERS = "PIONEER"
 
 # ============================================================
 # HIGH SCORE STORAGE
 # ============================================================
-
-HIGH_SCORE_FILE = "pinball_highscore.txt"
 
 
 def load_high_score() -> int:
@@ -68,21 +105,17 @@ def update_high_score() -> None:
 # ============================================================
 
 pygame.init()
-WIDTH, HEIGHT = 1024, 768
-SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
+SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("SHU PIONEER ARENA")
 
 # Images
-rink_img = load_image("icerink.png", scale=(WIDTH, HEIGHT))
-jumbo_img = load_image("jumboT.png", scale=(800, 600))
-
-# Jumbotron positioning & score cutout area
-jumbo_x = WIDTH // 2 - jumbo_img.get_width() // 2
-jumbo_y = 50
-cutout_width, cutout_height = 460, 140
-cutout_x = jumbo_x + (jumbo_img.get_width() - cutout_width) // 2
-cutout_y = jumbo_y + 60
-cutout_rect = pygame.Rect(cutout_x, cutout_y, cutout_width, cutout_height)
+rink_img = load_image("icerink.png", scale=(SCREEN_WIDTH, SCREEN_HEIGHT))
+jumbo_img = load_image("jumboT.png", scale=JUMBO_SCALE)
+jumbo_x = SCREEN_WIDTH // 2 - jumbo_img.get_width() // 2
+jumbo_y = JUMBO_TOP
+cutout_x = jumbo_x + (jumbo_img.get_width() - CUTOUT_WIDTH) // 2
+cutout_y = jumbo_y + CUTOUT_OFFSET_Y
+cutout_rect = pygame.Rect(cutout_x, cutout_y, CUTOUT_WIDTH, CUTOUT_HEIGHT)
 
 # Fonts
 small_font = load_font(28, bold=True)
@@ -103,27 +136,21 @@ class SystemMode(Enum):
     TEST_MODE = auto()
 
 
-current_mode: "SystemMode" = SystemMode.ATTRACT_MODE
-
+current_mode: SystemMode = SystemMode.ATTRACT_MODE
 
 score: int = 0
-high_score: int = load_high_score()  # all-time saved high score
-balls_left: int = 2
-collected: int = 0  # PIONEER progress (0–7)
+high_score: int = load_high_score()
+balls_left: int = INITIAL_BALLS
+collected: int = 0  # PIONEER progress (0–len(PIONEER_LETTERS))
 mega_jackpot: bool = False
 debug_mode: bool = False
 
-# Drop target state: each index = one physical drop
-# False = up, True = down
+# Drop target state: index = physical drop; False = up, True = down
 drop_targets_down = [False, False, False]
 
-# For debouncing / cooldowns
-last_hit = 0.0
-HIT_COOLDOWN = 0.4
-
-last_bumper_hit = {1: 0.0, 2: 0.0}
-BUMPER_COOLDOWN = 0.3
-PULSE_TIME = 0.1
+# Debouncing
+last_hit: float = 0.0
+last_bumper_hit: dict = {1: 0.0, 2: 0.0}
 
 # Track previous state of the drain switch to detect edges
 ball_drain_last_state: bool = False
@@ -138,43 +165,25 @@ program_start_time = time.time()
 
 
 # ============================================================
-# TEST MODE CONSTANTS / TABLES
-# ============================================================
-
-# Solenoid safety in TEST_MODE
-TEST_SOLENOID_PULSE_TIME = 0.08  # short, safe pulse
-TEST_SOLENOID_COOLDOWN = 0.5  # minimum delay between fires (per solenoid)
-
-# Audio test settings
-TEST_VOLUME_STEP = 0.1
-
-# Logical lists of switches and solenoids for diagnostics
-SWITCH_LIST = [
-    ("Strike Plate", targets_any),
-    ("Bumper 1", bumper1),
-    ("Bumper 2", bumper2),
-    ("Drop Target 1", target1),
-    ("Drop Target 2", target2),
-    ("Drop Target 3", target3),
-    ("Goal Sensor", goal_sensor),
-    ("Ball Drain", ball_drain),
-]
-
-SOLENOID_LIST = [
-    ("Gate 1 (Bumper 1)", gate1),
-    ("Gate 2 (Bumper 2)", gate2),
-    ("Jackpot Reset", jackpot_gate),
-]
-
-# Reasonable assumption: these are all defined sounds in audio.py
-TEST_SOUND_NAMES = ["hit", "bumper", "jackpot"]
-
-
-# ============================================================
 # RENDER HELPERS
 # ============================================================
 
-def draw_dot_text(surface, text, x, y, color=(255, 255, 255), scale=2, spacing=3):
+
+def _blit_centered(surface: pygame.Surface, source: pygame.Surface, y: int) -> None:
+    """Blit source onto surface horizontally centered at the given y."""
+    x = SCREEN_WIDTH // 2 - source.get_width() // 2
+    surface.blit(source, (x, y))
+
+
+def draw_dot_text(
+    surface: pygame.Surface,
+    text: str,
+    x: int,
+    y: int,
+    color: tuple = (255, 255, 255),
+    scale: int = 2,
+    spacing: int = 3,
+) -> None:
     """Render text as a dot-matrix style using a mask."""
     font = pygame.font.SysFont("Courier New", 48, bold=True)
     base = font.render(text, True, (255, 255, 255))
@@ -194,10 +203,11 @@ def draw_dot_text(surface, text, x, y, color=(255, 255, 255), scale=2, spacing=3
                 pygame.draw.circle(surface, color, (x + px, y + py), 2)
 
 
-def draw_pioneer(surface, x, y, collected_count):
+def draw_pioneer(
+    surface: pygame.Surface, x: int, y: int, collected_count: int
+) -> None:
     """Draw PIONEER letters as bulbs on the jumbotron."""
-    word = "PIONEER"
-    for i, letter in enumerate(word):
+    for i, letter in enumerate(PIONEER_LETTERS):
         if i < collected_count:
             # Lit letter
             draw_dot_text(surface, letter, x + i * 70, y, (255, 215, 60), scale=2)
@@ -206,12 +216,11 @@ def draw_pioneer(surface, x, y, collected_count):
             draw_dot_text(surface, "•", x + i * 70, y, (120, 120, 60), scale=2)
 
 
-def draw_layout():
-    """Draw the full rink, jumbotron, score, PIONEER progress, etc."""
+def draw_layout() -> None:
+    """Draw the full rink, jumbotron, score, PIONEER progress, and HUD."""
     SCREEN.blit(rink_img, (0, 0))
     SCREEN.blit(jumbo_img, (jumbo_x, jumbo_y))
 
-    # Score text as big dot-matrix
     score_text = str(score)
     font = pygame.font.SysFont("Courier New", 48, bold=True)
     base = font.render(score_text, True, (255, 255, 255))
@@ -221,7 +230,6 @@ def draw_layout():
     )
     mask = pygame.mask.from_surface(base)
     text_width = mask.get_size()[0]
-
     draw_dot_text(
         SCREEN,
         score_text,
@@ -231,16 +239,9 @@ def draw_layout():
         scale=3,
     )
 
-    # High score (top right corner)
-    hs_text = f"HIGH SCORE: {high_score}"
-    hs_surface = small_font.render(hs_text, True, (255, 215, 0))
+    hs_surface = small_font.render(f"HIGH SCORE: {high_score}", True, (255, 215, 0))
+    SCREEN.blit(hs_surface, (SCREEN_WIDTH - hs_surface.get_width() - 20, 20))
 
-    # Position 20px from right/top
-    hs_x = WIDTH - hs_surface.get_width() - 20
-    hs_y = 20
-    SCREEN.blit(hs_surface, (hs_x, hs_y))
-
-    # PIONEER letters
     draw_pioneer(
         SCREEN,
         cutout_rect.x,
@@ -248,14 +249,12 @@ def draw_layout():
         collected,
     )
 
-    # Balls left
     balls_surface = small_font.render(f"Balls: {balls_left}", True, (255, 255, 255))
-    SCREEN.blit(balls_surface, (40, HEIGHT - 50))
+    SCREEN.blit(balls_surface, (40, SCREEN_HEIGHT - 50))
 
-    # Jackpot banner
     if mega_jackpot:
         mj = medium_font.render("MEGA JACKPOT!!", True, (206, 17, 65))
-        SCREEN.blit(mj, (WIDTH // 2 - mj.get_width() // 2, HEIGHT - 80))
+        _blit_centered(SCREEN, mj, SCREEN_HEIGHT - 80)
 
     # Debug overlay (jumbotron grid)
     if debug_mode:
@@ -282,120 +281,88 @@ def draw_layout():
 # GAME LOGIC / EVENT HANDLERS
 # ============================================================
 
-def on_target_hit():
-    """Strike plate hit → award points with cooldown."""
+def on_target_hit() -> None:
+    """Strike plate hit: award points with cooldown."""
     global last_hit, score
     now = time.time()
     if now - last_hit >= HIT_COOLDOWN:
-        score += 500
+        score += POINTS_TARGET_HIT
         update_high_score()
         last_hit = now
-        print("🎯 Target hit! +500")
         play_sound("hit")
 
 
-def on_bumper_hit(bumper_id: int):
-    """Bumper hit → score, sound, and fire the corresponding gate."""
+def on_bumper_hit(bumper_id: int) -> None:
+    """Bumper hit: score, sound, and fire the corresponding gate."""
     global last_bumper_hit, score
     now = time.time()
     if now - last_bumper_hit[bumper_id] >= BUMPER_COOLDOWN:
-        score += 100
+        score += POINTS_BUMPER
         update_high_score()
         last_bumper_hit[bumper_id] = now
-        print(f"Bumper {bumper_id} hit! +100")
         play_sound("bumper")
-
         gate = gate1 if bumper_id == 1 else gate2
         threading.Thread(
             target=pulse_solenoid,
-            args=(gate, PULSE_TIME),
+            args=(gate, SOLENOID_PULSE_TIME),
             daemon=True,
         ).start()
 
 
-def on_goal_scored():
-    """Puck/ball goes through goal sensor → letters and possible jackpot."""
+def on_goal_scored() -> None:
+    """Goal sensor: award points, advance PIONEER letters, possibly trigger mega jackpot."""
     global collected, score, mega_jackpot
-    score += 2000  # goals are big points
+    score += POINTS_GOAL
     update_high_score()
 
-    if collected < len("PIONEER"):
+    if collected < len(PIONEER_LETTERS):
         collected += 1
 
-    print(f"GOAL SCORED! Letters: {collected}/{len('PIONEER')}")
     play_sound("jackpot")
 
-    # Check jackpot condition
-    if collected == len("PIONEER"):
+    if collected == len(PIONEER_LETTERS):
         mega_jackpot = True
-        score += 10000
+        score += POINTS_MEGA_JACKPOT
         update_high_score()
-        print("💥 MEGA JACKPOT!")
         play_sound("jackpot")
-
-        # Reset letters & jackpot flag so player can re-earn
         collected = 0
         mega_jackpot = False
 
 
-def on_drop_target_hit():
-    """Scan and handle the 3 drop targets"""
-    global drop_targets_down
-    global target1_last_state, target2_last_state, target3_last_state
+def on_drop_target_hit() -> None:
+    """Scan the 3 drop targets; on edge-down mark target down; when all down, fire reset."""
+    global drop_targets_down, target1_last_state, target2_last_state, target3_last_state
 
-    # Read current switch states (rows)
-    s1 = target1.is_pressed
-    s2 = target2.is_pressed
-    s3 = target3.is_pressed
+    switches = [target1, target2, target3]
+    last_states = [target1_last_state, target2_last_state, target3_last_state]
 
-    # Target 1: 
-    if s1 and not target1_last_state:
-        if not drop_targets_down[0]:
-            drop_targets_down[0] = True
-            print("🔽 Drop Target 1 DOWN!")
+    for i, (btn, last) in enumerate(zip(switches, last_states)):
+        if btn.is_pressed and not last and not drop_targets_down[i]:
+            drop_targets_down[i] = True
 
-    # Target 2
-    if s2 and not target2_last_state:
-        if not drop_targets_down[1]:
-            drop_targets_down[1] = True
-            print("🔽 Drop Target 2 DOWN!")
+    target1_last_state = target1.is_pressed
+    target2_last_state = target2.is_pressed
+    target3_last_state = target3.is_pressed
 
-    # Target 3
-    if s3 and not target3_last_state:
-        if not drop_targets_down[2]:
-            drop_targets_down[2] = True
-            print("🔽 Drop Target 3 DOWN!")
-
-    # Remember last states (like s1_last = s1, etc. in Arduino)
-    target1_last_state = s1
-    target2_last_state = s2
-    target3_last_state = s3
-
-    # If all 3 targets are down -> fire reset solenoid and reset state
     if all(drop_targets_down):
-        print("🔄 All drop targets down! Resetting bank...")
         threading.Thread(
             target=pulse_solenoid,
-            args=(jackpot_gate, 0.25),
+            args=(jackpot_gate, JACKPOT_GATE_PULSE_TIME),
             daemon=True,
         ).start()
-        # Reset for next cycle
         drop_targets_down = [False, False, False]
-        time.sleep(0.2)
+        time.sleep(DROP_TARGET_RESET_DELAY)
 
 
-def on_ball_drained():
-    """Ball drains to trough → decrement balls_left."""
+def on_ball_drained() -> None:
+    """Ball in trough: decrement balls left."""
     global balls_left
     if balls_left > 0:
         balls_left -= 1
-    print(f" Ball drained (hardware), balls_left = {balls_left}")
-    # Optional: if you add a "drain" sound:
-    # play_sound("drain")
 
 
-def poll_hardware_inputs():
-    """Read physical GPIO inputs and trigger their handlers (hardware events)."""
+def poll_hardware_inputs() -> None:
+    """Read GPIO inputs and dispatch to game handlers."""
     global ball_drain_last_state
 
     if not USE_GPIO:
@@ -438,347 +405,87 @@ def poll_hardware_inputs():
 # SCREENS (START / GAME OVER)
 # ============================================================
 
-def show_start_screen():
-    """Start / attract-mode screen.
-
-    Returns:
-        SystemMode.GAMEPLAY_MODE if player starts a normal game.
-        SystemMode.TEST_MODE if the service / test button combo is used.
-    """
+def show_start_screen() -> SystemMode:
+    """Attract screen. Returns GAMEPLAY_MODE to start game, TEST_MODE if service/F9 used."""
     global current_mode
     current_mode = SystemMode.ATTRACT_MODE
     blink = True
-    timer = 0
-    fade_surface = pygame.Surface((WIDTH, HEIGHT))
+    timer = 0.0
+    fade_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
     fade_surface.fill((0, 0, 0))
 
     while True:
         SCREEN.blit(rink_img, (0, 0))
         SCREEN.blit(jumbo_img, (jumbo_x, jumbo_y))
 
-        # Title
         title = medium_font.render("SHU PIONEER PINBALL", True, (255, 255, 255))
-        SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 260))
+        _blit_centered(SCREEN, title, 260)
 
-        # Show current all-time high score on start screen
-        hs_txt = small_font.render(
-            f"ALL-TIME HIGH SCORE: {high_score}", True, (255, 215, 0)
-        )
-        SCREEN.blit(hs_txt, (WIDTH // 2 - hs_txt.get_width() // 2, 300))
+        hs_txt = small_font.render(f"ALL-TIME HIGH SCORE: {high_score}", True, (255, 215, 0))
+        _blit_centered(SCREEN, hs_txt, 300)
 
-        # Blinking "Press Enter to Start"
         if blink:
             txt = small_font.render("PRESS ENTER TO START", True, (255, 215, 0))
-            SCREEN.blit(txt, (WIDTH // 2 - txt.get_width() // 2, 340))
+            _blit_centered(SCREEN, txt, 340)
 
-        # Blink timer
         timer += clock.get_time()
-        if timer > 500:  # blink every 0.5s
+        if timer >= BLINK_INTERVAL_MS:
             blink = not blink
-            timer = 0
+            timer = 0.0
 
         pygame.display.flip()
-        clock.tick(60)
+        clock.tick(FPS)
 
-        # If the physical service button is held at startup, go to TEST MODE
         if USE_GPIO and getattr(service_button, "is_pressed", False):
             current_mode = SystemMode.TEST_MODE
             return SystemMode.TEST_MODE
 
-        # Input handling
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
             if e.type == pygame.KEYDOWN:
                 if e.key == pygame.K_RETURN:
-                    # Fade out into gameplay
-                    for alpha in range(0, 180, 6):
+                    for alpha in range(0, 180, FADE_STEP_START):
                         fade_surface.set_alpha(alpha)
                         SCREEN.blit(fade_surface, (0, 0))
                         pygame.display.flip()
-                        clock.tick(60)
+                        clock.tick(FPS)
                     current_mode = SystemMode.GAMEPLAY_MODE
                     return SystemMode.GAMEPLAY_MODE
-                elif e.key == pygame.K_F9:
-                    # Secret keyboard shortcut to enter TEST MODE (no on-screen hint)
+                if e.key == pygame.K_F9:
                     current_mode = SystemMode.TEST_MODE
                     return SystemMode.TEST_MODE
 
 
-def show_game_over_screen():
-    """Show 'Game Over' screen, then wait for Enter to restart."""
-    fade_surface = pygame.Surface((WIDTH, HEIGHT))
+def show_game_over_screen() -> None:
+    """Fade in Game Over, show score/high score, wait for Enter to restart."""
+    fade_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
     fade_surface.fill((0, 0, 0))
 
-    # Fade-in effect
-    for alpha in range(0, 180, 5):
+    for alpha in range(0, 180, FADE_STEP_GAME_OVER):
         fade_surface.set_alpha(alpha)
         SCREEN.blit(rink_img, (0, 0))
         SCREEN.blit(jumbo_img, (jumbo_x, jumbo_y))
-
-        # GAME OVER text
         text = medium_font.render("GAME OVER", True, (255, 50, 50))
-        SCREEN.blit(text, (WIDTH // 2 - text.get_width() // 2, 200))
-
-        # Show final score and high score
+        _blit_centered(SCREEN, text, 200)
         final_txt = small_font.render(f"FINAL SCORE: {score}", True, (255, 255, 255))
-        SCREEN.blit(final_txt, (WIDTH // 2 - final_txt.get_width() // 2, 260))
-
+        _blit_centered(SCREEN, final_txt, 260)
         hs_txt = small_font.render(f"ALL-TIME HIGH: {high_score}", True, (255, 215, 0))
-        SCREEN.blit(hs_txt, (WIDTH // 2 - hs_txt.get_width() // 2, 295))
-
-        # Press Enter prompt
+        _blit_centered(SCREEN, hs_txt, 295)
         prompt = small_font.render("PRESS ENTER TO RESTART", True, (255, 255, 255))
-        SCREEN.blit(prompt, (WIDTH // 2 - prompt.get_width() // 2, 340))
-
+        _blit_centered(SCREEN, prompt, 340)
         SCREEN.blit(fade_surface, (0, 0))
         pygame.display.flip()
         pygame.time.delay(30)
 
-    # Wait for ENTER
-    waiting = True
-    while waiting:
+    while True:
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
             if e.type == pygame.KEYDOWN and e.key == pygame.K_RETURN:
-                waiting = False
-
-
-# ============================================================
-# TEST MODE (SERVICE / DIAGNOSTICS)
-# ============================================================
-
-
-def _draw_test_mode_header(title: str, subtitle: str = ""):
-    """Draw a common header for all TEST MODE screens."""
-    SCREEN.blit(rink_img, (0, 0))
-    SCREEN.blit(jumbo_img, (jumbo_x, jumbo_y))
-
-    header = medium_font.render(f"TEST MODE - {title}", True, (255, 255, 0))
-    SCREEN.blit(header, (WIDTH // 2 - header.get_width() // 2, 40))
-
-    if subtitle:
-        sub = small_font.render(subtitle, True, (200, 200, 200))
-        SCREEN.blit(sub, (WIDTH // 2 - sub.get_width() // 2, 80))
-
-
-def _get_cpu_temperature() -> str:
-    """Best-effort CPU temperature readout (Raspberry Pi).
-
-    Returns a string like '47.8 C' or 'N/A' if not available.
-    """
-    try:
-        out = os.popen("vcgencmd measure_temp").read().strip()
-        # Expected format: temp=47.8'C
-        if out.startswith("temp="):
-            value = out.split("=", 1)[1].split("'")[0]
-            float(value)  # validate
-            return f"{value} C"
-    except Exception:
-        pass
-    return "N/A"
-
-
-def _format_uptime() -> str:
-    seconds = int(time.time() - program_start_time)
-    mins, secs = divmod(seconds, 60)
-    hours, mins = divmod(mins, 60)
-    return f"{hours:02d}:{mins:02d}:{secs:02d}"
-
-
-def run_test_mode():
-    """Main loop for TEST MODE.
-
-    - Isolated from gameplay scoring / progression.
-    - Navigable with keyboard arrows or physical bumper buttons.
-    """
-    global current_mode
-
-    current_mode = SystemMode.TEST_MODE
-
-    # Sub-screens
-    screens = ["SWITCH TEST", "SOLENOID TEST", "DISPLAY TEST", "AUDIO TEST", "SYSTEM STATUS"]
-    screen_index = 0
-
-    # Selection indices for certain screens
-    solenoid_index = 0
-    sound_index = 0
-    display_pattern = 0
-    test_volume = 1.0
-
-    # Solenoid safety cooldowns
-    last_solenoid_fire = {i: 0.0 for i in range(len(SOLENOID_LIST))}
-
-    running = True
-    while running:
-        now = time.time()
-
-        # ---- Input handling (Pygame events) ----
-        for e in pygame.event.get():
-            if e.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-
-            if e.type == pygame.KEYDOWN:
-                if e.key == pygame.K_ESCAPE:
-                    # Exit TEST MODE back to attract screen
-                    current_mode = SystemMode.ATTRACT_MODE
-                    return
-
-                if e.key == pygame.K_LEFT:
-                    screen_index = (screen_index - 1) % len(screens)
-                elif e.key == pygame.K_RIGHT:
-                    screen_index = (screen_index + 1) % len(screens)
-
-                # Per-screen key handling
-                if screens[screen_index] == "SOLENOID TEST":
-                    if e.key == pygame.K_UP:
-                        solenoid_index = (solenoid_index - 1) % len(SOLENOID_LIST)
-                    elif e.key == pygame.K_DOWN:
-                        solenoid_index = (solenoid_index + 1) % len(SOLENOID_LIST)
-                    elif e.key in (pygame.K_SPACE, pygame.K_RETURN):
-                        # Fire selected solenoid with safety cooldown
-                        last = last_solenoid_fire[solenoid_index]
-                        if now - last >= TEST_SOLENOID_COOLDOWN:
-                            name, gate = SOLENOID_LIST[solenoid_index]
-                            print(f"[TEST] Firing solenoid: {name}")
-                            threading.Thread(
-                                target=pulse_solenoid,
-                                args=(gate, TEST_SOLENOID_PULSE_TIME),
-                                daemon=True,
-                            ).start()
-                            last_solenoid_fire[solenoid_index] = now
-
-                elif screens[screen_index] == "AUDIO TEST":
-                    if e.key == pygame.K_UP:
-                        test_volume = min(1.0, test_volume + TEST_VOLUME_STEP)
-                        pygame.mixer.music.set_volume(test_volume)
-                    elif e.key == pygame.K_DOWN:
-                        test_volume = max(0.0, test_volume - TEST_VOLUME_STEP)
-                        pygame.mixer.music.set_volume(test_volume)
-                    elif e.key == pygame.K_LEFT:
-                        sound_index = (sound_index - 1) % len(TEST_SOUND_NAMES)
-                    elif e.key == pygame.K_RIGHT:
-                        sound_index = (sound_index + 1) % len(TEST_SOUND_NAMES)
-                    elif e.key in (pygame.K_SPACE, pygame.K_RETURN):
-                        sound_name = TEST_SOUND_NAMES[sound_index]
-                        print(f"[TEST] Playing sound: {sound_name} (vol={test_volume:.2f})")
-                        play_sound(sound_name)
-
-                elif screens[screen_index] == "DISPLAY TEST":
-                    if e.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_SPACE):
-                        display_pattern = (display_pattern + 1) % 4
-
-        # ---- Rendering per screen ----
-        current_title = screens[screen_index]
-
-        if current_title == "SWITCH TEST":
-            _draw_test_mode_header("SWITCH TEST", "Activate any switch to see its state.")
-
-            y = 140
-            for name, btn in SWITCH_LIST:
-                active = getattr(btn, "is_pressed", False)
-                state_text = "ACTIVE" if active else "INACTIVE"
-                color = (0, 255, 0) if active else (200, 0, 0)
-                label = small_font.render(f"{name:>14}: {state_text}", True, color)
-                SCREEN.blit(label, (WIDTH // 2 - label.get_width() // 2, y))
-                y += 30
-
-        elif current_title == "SOLENOID TEST":
-            _draw_test_mode_header(
-                "SOLENOID TEST",
-                "UP/DOWN to select, SPACE/ENTER to fire (safety cooldown).",
-            )
-
-            y = 150
-            for idx, (name, _gate) in enumerate(SOLENOID_LIST):
-                prefix = ">" if idx == solenoid_index else " "
-                color = (255, 255, 0) if idx == solenoid_index else (220, 220, 220)
-                label = small_font.render(f"{prefix} {name}", True, color)
-                SCREEN.blit(label, (WIDTH // 2 - label.get_width() // 2, y))
-                y += 32
-
-        elif current_title == "DISPLAY TEST":
-            _draw_test_mode_header(
-                "DISPLAY TEST",
-                "SPACE/ARROWS to cycle patterns. ESC to exit.",
-            )
-
-            # Simple full-screen color patterns and brightness bar
-            if display_pattern == 0:
-                overlay_color = (255, 0, 0)
-            elif display_pattern == 1:
-                overlay_color = (0, 255, 0)
-            elif display_pattern == 2:
-                overlay_color = (0, 0, 255)
-            else:
-                overlay_color = (255, 255, 255)
-
-            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            overlay.fill((*overlay_color, 160))
-            SCREEN.blit(overlay, (0, 0))
-
-            # Brightness gradient bar
-            bar_y = HEIGHT - 80
-            for i in range(0, WIDTH, 10):
-                level = int(255 * (i / WIDTH))
-                pygame.draw.rect(SCREEN, (level, level, level), (i, bar_y, 10, 40))
-
-        elif current_title == "AUDIO TEST":
-            _draw_test_mode_header(
-                "AUDIO TEST",
-                "LEFT/RIGHT to pick sound, UP/DOWN volume, SPACE/ENTER to play.",
-            )
-
-            y = 160
-            for idx, name in enumerate(TEST_SOUND_NAMES):
-                prefix = ">" if idx == sound_index else " "
-                color = (255, 255, 0) if idx == sound_index else (220, 220, 220)
-                label = small_font.render(f"{prefix} {name}", True, color)
-                SCREEN.blit(label, (WIDTH // 2 - label.get_width() // 2, y))
-                y += 32
-
-            vol_label = small_font.render(f"Volume: {test_volume:.2f}", True, (255, 255, 255))
-            SCREEN.blit(vol_label, (WIDTH // 2 - vol_label.get_width() // 2, y + 20))
-
-        elif current_title == "SYSTEM STATUS":
-            _draw_test_mode_header("SYSTEM STATUS", "Basic Raspberry Pi health.")
-
-            cpu_temp = _get_cpu_temperature()
-            uptime = _format_uptime()
-
-            # Use os.getloadavg if available, otherwise skip
-            try:
-                load1, load5, load15 = os.getloadavg()
-                load_text = f"Load avg (1/5/15): {load1:.2f}, {load5:.2f}, {load15:.2f}"
-            except (AttributeError, OSError):
-                load_text = "Load avg: N/A"
-
-            lines = [
-                f"CPU Temp: {cpu_temp}",
-                f"Uptime: {uptime}",
-                load_text,
-            ]
-
-            y = 150
-            for line in lines:
-                label = small_font.render(line, True, (255, 255, 255))
-                SCREEN.blit(label, (WIDTH // 2 - label.get_width() // 2, y))
-                y += 30
-
-        # Footer with navigation help
-        footer = small_font.render(
-            "LEFT/RIGHT = Change Screen   ESC = Exit Test Mode",
-            True,
-            (220, 220, 220),
-        )
-        SCREEN.blit(footer, (WIDTH // 2 - footer.get_width() // 2, HEIGHT - 40))
-
-        pygame.display.flip()
-        clock.tick(60)
+                return
 
 
 def handle_pygame_events() -> bool:
@@ -800,12 +507,11 @@ def handle_pygame_events() -> bool:
                 # Test strike plate
                 on_target_hit()
             elif e.key == pygame.K_g:
-                # Manual letter advance / jackpot test
-                if collected < len("PIONEER"):
+                if collected < len(PIONEER_LETTERS):
                     collected += 1
-                if collected == len("PIONEER"):
+                if collected == len(PIONEER_LETTERS):
                     mega_jackpot = True
-                    score += 10000
+                    score += POINTS_MEGA_JACKPOT
                     update_high_score()
                     play_sound("jackpot")
                     collected = 0
@@ -814,9 +520,8 @@ def handle_pygame_events() -> bool:
                 # Manual drain test
                 on_ball_drained()
             elif e.key == pygame.K_r:
-                # Reset current game, but keep high score
                 score = 0
-                balls_left = 2
+                balls_left = INITIAL_BALLS
                 collected = 0
                 mega_jackpot = False
             elif e.key == pygame.K_d:
@@ -826,74 +531,82 @@ def handle_pygame_events() -> bool:
     return True
 
 
-def handle_keyboard_test_hit():
-    """Optional keyboard test for hit using ENTER."""
-    keys = pygame.key.get_pressed()
-    if keys[pygame.K_RETURN]:
+def handle_keyboard_test_hit() -> None:
+    """Keyboard test: Enter triggers strike plate hit."""
+    if pygame.key.get_pressed()[pygame.K_RETURN]:
         on_target_hit()
         pygame.time.wait(200)
 
 
-def check_game_over():
-    """Check for game over and reset state if needed."""
+def check_game_over() -> None:
+    """If no balls left, show game over screen then reset game state (keep high score)."""
     global score, balls_left, collected, mega_jackpot
-
     if balls_left <= 0:
-        print("GAME OVER — resetting")
         show_game_over_screen()
-
-        # Reset full game state AFTER screen (high_score is kept)
         score = 0
-        balls_left = 2
+        balls_left = INITIAL_BALLS
         collected = 0
         mega_jackpot = False
 
 
-def render_frame():
-    """Draw the current frame and update the display."""
+def render_frame() -> None:
+    """Draw current frame and tick clock."""
     draw_layout()
     pygame.display.flip()
-    clock.tick(60)
+    clock.tick(FPS)
+
+
+def close_hardware() -> None:
+    """Release all GPIO/hardware resources."""
+    for device in (targets_any, bumper1, bumper2, gate1, gate2, ball_drain, jackpot_gate):
+        device.close()
 
 
 # ============================================================
-# MAIN GAME LOOP
+# MAIN
 # ============================================================
 
-# Initialize all solenoid gates to OFF state before starting
-# This prevents solenoids from firing when 24V power turns on
-initialize_all_gates()
 
-# Start background music and show start screen once
-start_music()
-chosen_mode = show_start_screen()
+def main() -> None:
+    """Initialize hardware, run start/test/gameplay flow, then exit cleanly."""
+    global current_mode
 
-# If service mode was requested at startup, run TEST MODE first.
-if chosen_mode == SystemMode.TEST_MODE:
-    run_test_mode()
-    # When exiting TEST MODE, go back to attract screen once more.
+    initialize_all_gates()
+    start_music()
     chosen_mode = show_start_screen()
 
-# Normal gameplay loop (GAMEPLAY_MODE)
-current_mode = SystemMode.GAMEPLAY_MODE
-running = True
-while running:
-    running = handle_pygame_events()
-    poll_hardware_inputs()
-    handle_keyboard_test_hit()
-    check_game_over()
-    render_frame()
+    if chosen_mode == SystemMode.TEST_MODE:
+        current_mode = SystemMode.TEST_MODE
+        test_ctx = TestModeContext(
+            screen=SCREEN,
+            clock=clock,
+            width=SCREEN_WIDTH,
+            height=SCREEN_HEIGHT,
+            rink_img=rink_img,
+            jumbo_img=jumbo_img,
+            jumbo_x=jumbo_x,
+            jumbo_y=jumbo_y,
+            small_font=small_font,
+            medium_font=medium_font,
+            program_start_time=program_start_time,
+        )
+        run_test_mode(test_ctx)
+        current_mode = SystemMode.ATTRACT_MODE
+        chosen_mode = show_start_screen()
 
-# ============================================================
-# CLEAN EXIT
-# ============================================================
+    current_mode = SystemMode.GAMEPLAY_MODE
+    running = True
+    while running:
+        running = handle_pygame_events()
+        poll_hardware_inputs()
+        handle_keyboard_test_hit()
+        check_game_over()
+        render_frame()
 
-targets_any.close()
-bumper1.close()
-bumper2.close()
-gate1.close()
-gate2.close()
-ball_drain.close()
-jackpot_gate.close()
-pygame.quit()
-sys.exit()
+    close_hardware()
+    pygame.quit()
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
