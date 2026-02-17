@@ -589,6 +589,16 @@ def main() -> None:
     global current_mode
 
     initialize_all_gates()
+    # Ensure the 3‑target drop bank starts with all targets in the UP position.
+    # This fires the reset solenoid once at startup so any targets left down
+    # from a previous power cycle are raised.
+    if USE_GPIO:
+        threading.Thread(
+            target=pulse_solenoid,
+            args=(jackpot_gate, JACKPOT_GATE_PULSE_TIME),
+            daemon=True,
+        ).start()
+        time.sleep(DROP_TARGET_RESET_DELAY)
     start_music()
     chosen_mode = show_start_screen()
 
