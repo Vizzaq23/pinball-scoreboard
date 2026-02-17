@@ -350,7 +350,9 @@ def on_drop_target_hit() -> None:
     last_states = [target1_last_state, target2_last_state, target3_last_state]
 
     for i, (btn, last) in enumerate(zip(switches, last_states)):
-        if btn.is_pressed and not last and not drop_targets_down[i]:
+        # Sensor is active (pressed) when target is UP, inactive (not pressed) when DOWN
+        # Detect transition from pressed (UP) to not pressed (DOWN)
+        if not btn.is_pressed and last and not drop_targets_down[i]:
             drop_targets_down[i] = True
 
     target1_last_state = target1.is_pressed
