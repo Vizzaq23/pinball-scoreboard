@@ -218,8 +218,14 @@ def run_test_mode(ctx: TestModeContext) -> None:
             y = 140
             for name, btn in SWITCH_LIST:
                 active = getattr(btn, "is_pressed", False)
-                state_text = "ACTIVE" if active else "INACTIVE"
-                color = COLOR_ACTIVE if active else COLOR_INACTIVE
+                # For drop targets, show UP/DOWN instead of ACTIVE/INACTIVE
+                # Sensor is active (pressed) when target is UP, inactive when DOWN
+                if "Drop Target" in name:
+                    state_text = "UP" if active else "DOWN"
+                    color = COLOR_ACTIVE if active else COLOR_INACTIVE
+                else:
+                    state_text = "ACTIVE" if active else "INACTIVE"
+                    color = COLOR_ACTIVE if active else COLOR_INACTIVE
                 label = ctx.small_font.render(f"{name:>14}: {state_text}", True, color)
                 _blit_centered(ctx, label, y)
                 y += 30
