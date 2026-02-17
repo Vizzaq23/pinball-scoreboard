@@ -73,6 +73,15 @@ try:
     # Explicitly ensure gate is OFF immediately after initialization
     jackpot_gate.off()
 
+    # Popper solenoid that fires when jackpot sensor (goal_sensor) is hit
+    # to pop the ball up to a ramp.
+    POPPER_GATE = 25
+    popper_gate = DigitalOutputDevice(
+        POPPER_GATE, active_high=True, initial_value=False
+    )
+    # Explicitly ensure gate is OFF immediately after initialization
+    popper_gate.off()
+
     # Dedicated service button to enter TEST MODE (optional hardware)
     # Wire a momentary switch between this pin and GND.
     SERVICE_BUTTON_PIN = 21
@@ -114,6 +123,7 @@ except Exception as e:
     gate2 = MockGate()
     col = MockGate()
     jackpot_gate = MockGate()
+    popper_gate = MockGate()
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +138,7 @@ def initialize_all_gates() -> None:
         gate2.off()
         col.off()
         jackpot_gate.off()
+        popper_gate.off()
 
 
 def pulse_solenoid(gate: Any, pulse_time: float) -> None:

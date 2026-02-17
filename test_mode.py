@@ -21,6 +21,7 @@ from hardware import (
     goal_sensor,
     ball_drain,
     jackpot_gate,
+    popper_gate,
     pulse_solenoid,
 )
 
@@ -48,6 +49,7 @@ SOLENOID_LIST = [
     ("Gate 1 (Bumper 1)", gate1),
     ("Gate 2 (Bumper 2)", gate2),
     ("Jackpot Reset", jackpot_gate),
+    ("Popper (Ramp)", popper_gate),
 ]
 
 TEST_SOUND_NAMES = ["hit", "bumper", "jackpot"]

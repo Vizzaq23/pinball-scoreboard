@@ -21,6 +21,7 @@ from hardware import (
     goal_sensor,
     initialize_all_gates,
     jackpot_gate,
+    popper_gate,
     pulse_solenoid,
     service_button,
     target1,
@@ -58,6 +59,7 @@ HIT_COOLDOWN = 0.4
 BUMPER_COOLDOWN = 0.3
 SOLENOID_PULSE_TIME = 0.1
 JACKPOT_GATE_PULSE_TIME = 0.25
+POPPER_PULSE_TIME = 0.1
 DROP_TARGET_RESET_DELAY = 0.2
 BLINK_INTERVAL_MS = 500
 FADE_STEP_START = 6
@@ -324,6 +326,13 @@ def on_goal_scored() -> None:
 
     play_sound("jackpot")
 
+    # Fire popper solenoid to pop ball up to ramp
+    threading.Thread(
+        target=pulse_solenoid,
+        args=(popper_gate, POPPER_PULSE_TIME),
+        daemon=True,
+    ).start()
+
     if collected == len(PIONEER_LETTERS):
         mega_jackpot = True
         score += POINTS_MEGA_JACKPOT
@@ -374,6 +383,7 @@ def poll_hardware_inputs() -> None:
 
     # "Activate" the column each scan (Arduino: digitalWrite(colPin, LOW);)
     col.on()
+    time.sleep(0.002)  # 2ms delay for IR LED stabilization
 
     # Strike plate / main target (simple level read with a short cooldown inside handler)
     if targets_any.is_pressed:
@@ -391,6 +401,7 @@ def poll_hardware_inputs() -> None:
 
     # Drop targets: scan & handle all 3 inside on_drop_target_hit()
     on_drop_target_hit()
+    col.off()  # Turn off column after reading drop targets
 
     # Goal sensor can remain level‑based with a small delay
     if goal_sensor.is_pressed:
@@ -562,7 +573,7 @@ def render_frame() -> None:
 
 def close_hardware() -> None:
     """Release all GPIO/hardware resources."""
-    for device in (targets_any, bumper1, bumper2, gate1, gate2, ball_drain, jackpot_gate):
+    for device in (targets_any, bumper1, bumper2, gate1, gate2, ball_drain, jackpot_gate, popper_gate):
         device.close()
 
 
