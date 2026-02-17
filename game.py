@@ -36,7 +36,7 @@ from test_mode import TestModeContext, run_test_mode
 
 HIGH_SCORE_FILE = "pinball_highscore.txt"
 
-# Display
+# Display (fallback; actual size set from display after pygame.init)
 SCREEN_WIDTH = 1024
 SCREEN_HEIGHT = 768
 FPS = 60
@@ -105,6 +105,10 @@ def update_high_score() -> None:
 # ============================================================
 
 pygame.init()
+# Use display's native resolution so the game fills the screen
+_info = pygame.display.Info()
+SCREEN_WIDTH = _info.current_w
+SCREEN_HEIGHT = _info.current_h
 SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("SHU PIONEER ARENA")
 
