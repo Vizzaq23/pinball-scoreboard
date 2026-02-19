@@ -64,6 +64,10 @@ DROP_TARGET_RESET_DELAY = 0.2
 BLINK_INTERVAL_MS = 500
 FADE_STEP_START = 6
 FADE_STEP_GAME_OVER = 5
+SCORE_POP_DURATION = 0.2
+PIONEER_FLASH_DURATION = 0.4
+MEGA_JACKPOT_DURATION = 1.5
+MEGA_JACKPOT_FLASH_DURATION = 0.35
 
 # Game state
 INITIAL_BALLS = 2
@@ -169,6 +173,12 @@ target3_last_state: bool = False
 # For uptime / status display
 program_start_time = time.time()
 
+# Animation state
+score_pop_until: float = 0.0
+pioneer_flash_index: int = -1
+pioneer_flash_until: float = 0.0
+mega_jackpot_until: float = 0.0
+
 
 # ============================================================
 # RENDER HELPERS
@@ -187,16 +197,14 @@ def draw_dot_text(
     x: int,
     y: int,
     color: tuple = (255, 255, 255),
-    scale: int = 2,
+    scale: float = 2,
     spacing: int = 3,
 ) -> None:
     """Render text as a dot-matrix style using a mask."""
     font = pygame.font.SysFont("Courier New", 48, bold=True)
     base = font.render(text, True, (255, 255, 255))
-    base = pygame.transform.scale(
-        base,
-        (base.get_width() * scale, base.get_height() * scale),
-    )
+    w, h = int(base.get_width() * scale), int(base.get_height() * scale)
+    base = pygame.transform.scale(base, (w, h))
     mask = pygame.mask.from_surface(base)
 
     for px in range(mask.get_size()[0]):
@@ -210,13 +218,26 @@ def draw_dot_text(
 
 
 def draw_pioneer(
-    surface: pygame.Surface, x: int, y: int, collected_count: int
+    surface: pygame.Surface,
+    x: int,
+    y: int,
+    collected_count: int,
+    flash_index: int = -1,
+    flash_until: float = 0.0,
 ) -> None:
-    """Draw PIONEER letters as bulbs on the jumbotron."""
+    """Draw PIONEER letters as bulbs on the jumbotron. Optional flash for recently lit letter."""
+    now = time.time()
     for i, letter in enumerate(PIONEER_LETTERS):
         if i < collected_count:
-            # Lit letter
-            draw_dot_text(surface, letter, x + i * 70, y, (255, 215, 60), scale=2)
+            if i == flash_index and now < flash_until:
+                # Just lit: brighter and slightly larger
+                progress = 1.0 - (flash_until - now) / PIONEER_FLASH_DURATION
+                scale = 2.0 + 0.3 * (1.0 - progress)
+                color = (255, 255, 200)
+            else:
+                scale = 2
+                color = (255, 215, 60)
+            draw_dot_text(surface, letter, x + i * 70, y, color, scale=scale)
         else:
             # Dim placeholder dot
             draw_dot_text(surface, "•", x + i * 70, y, (120, 120, 60), scale=2)
@@ -227,22 +248,25 @@ def draw_layout() -> None:
     SCREEN.blit(rink_img, (0, 0))
     SCREEN.blit(jumbo_img, (jumbo_x, jumbo_y))
 
+    # Score with optional pop animation
+    now = time.time()
+    score_scale_mult = 1.0
+    score_color = (255, 255, 255)
+    if now < score_pop_until:
+        elapsed = score_pop_until - now
+        score_scale_mult = 1.0 + 0.25 * min(1.0, elapsed / SCORE_POP_DURATION)
+        score_color = (255, 255, 220)
     score_text = str(score)
     font = pygame.font.SysFont("Courier New", 48, bold=True)
     base = font.render(score_text, True, (255, 255, 255))
-    base = pygame.transform.scale(
-        base,
-        (base.get_width() * 3, base.get_height() * 3),
-    )
-    mask = pygame.mask.from_surface(base)
-    text_width = mask.get_size()[0]
+    text_width = int(base.get_width() * 3 * score_scale_mult)
     draw_dot_text(
         SCREEN,
         score_text,
         cutout_rect.centerx - text_width // 2,
         cutout_rect.y + 200,
-        (255, 255, 255),
-        scale=3,
+        score_color,
+        scale=3 * score_scale_mult,
     )
 
     hs_surface = small_font.render(f"HIGH SCORE: {high_score}", True, (255, 215, 0))
@@ -253,13 +277,23 @@ def draw_layout() -> None:
         cutout_rect.x,
         cutout_rect.y + cutout_rect.height + 258,
         collected,
+        pioneer_flash_index,
+        pioneer_flash_until,
     )
 
     balls_surface = small_font.render(f"Balls: {balls_left}", True, (255, 255, 255))
     SCREEN.blit(balls_surface, (40, SCREEN_HEIGHT - 50))
 
-    if mega_jackpot:
-        mj = medium_font.render("MEGA JACKPOT!!", True, (206, 17, 65))
+    # MEGA JACKPOT: flash overlay then text
+    if mega_jackpot and mega_jackpot_until > 0:
+        mj_elapsed = time.time() - (mega_jackpot_until - MEGA_JACKPOT_DURATION)
+        if mj_elapsed < MEGA_JACKPOT_FLASH_DURATION:
+            flash_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+            flash_surf.fill((206, 17, 65))
+            alpha = int(180 * (1.0 - mj_elapsed / MEGA_JACKPOT_FLASH_DURATION))
+            flash_surf.set_alpha(alpha)
+            SCREEN.blit(flash_surf, (0, 0))
+        mj = medium_font.render("MEGA JACKPOT!!", True, (255, 215, 0))
         _blit_centered(SCREEN, mj, SCREEN_HEIGHT - 80)
 
     # Debug overlay (jumbotron grid)
@@ -289,23 +323,25 @@ def draw_layout() -> None:
 
 def on_target_hit() -> None:
     """Strike plate hit: award points with cooldown."""
-    global last_hit, score
+    global last_hit, score, score_pop_until
     now = time.time()
     if now - last_hit >= HIT_COOLDOWN:
         score += POINTS_TARGET_HIT
         update_high_score()
         last_hit = now
+        score_pop_until = now + SCORE_POP_DURATION
         play_sound("hit")
 
 
 def on_bumper_hit(bumper_id: int) -> None:
     """Bumper hit: score, sound, and fire the corresponding gate."""
-    global last_bumper_hit, score
+    global last_bumper_hit, score, score_pop_until
     now = time.time()
     if now - last_bumper_hit[bumper_id] >= BUMPER_COOLDOWN:
         score += POINTS_BUMPER
         update_high_score()
         last_bumper_hit[bumper_id] = now
+        score_pop_until = now + SCORE_POP_DURATION
         play_sound("bumper")
         gate = gate1 if bumper_id == 1 else gate2
         threading.Thread(
@@ -317,12 +353,15 @@ def on_bumper_hit(bumper_id: int) -> None:
 
 def on_goal_scored() -> None:
     """Goal sensor: award points, advance PIONEER letters, possibly trigger mega jackpot."""
-    global collected, score, mega_jackpot
+    global collected, score, mega_jackpot, score_pop_until, pioneer_flash_index, pioneer_flash_until, mega_jackpot_until
     score += POINTS_GOAL
     update_high_score()
+    score_pop_until = time.time() + SCORE_POP_DURATION
 
     if collected < len(PIONEER_LETTERS):
         collected += 1
+        pioneer_flash_index = collected - 1
+        pioneer_flash_until = time.time() + PIONEER_FLASH_DURATION
 
     play_sound("jackpot")
 
@@ -335,11 +374,11 @@ def on_goal_scored() -> None:
 
     if collected == len(PIONEER_LETTERS):
         mega_jackpot = True
+        mega_jackpot_until = time.time() + MEGA_JACKPOT_DURATION
         score += POINTS_MEGA_JACKPOT
         update_high_score()
+        score_pop_until = time.time() + SCORE_POP_DURATION
         play_sound("jackpot")
-        collected = 0
-        mega_jackpot = False
 
 
 def on_drop_target_hit() -> None:
@@ -511,6 +550,7 @@ def handle_pygame_events() -> bool:
     Returns False if the user requested to quit, otherwise True.
     """
     global score, balls_left, collected, mega_jackpot, debug_mode
+    global pioneer_flash_index, pioneer_flash_until, score_pop_until, mega_jackpot_until
 
     for e in pygame.event.get():
         if e.type == pygame.QUIT:
@@ -526,13 +566,19 @@ def handle_pygame_events() -> bool:
             elif e.key == pygame.K_g:
                 if collected < len(PIONEER_LETTERS):
                     collected += 1
-                if collected == len(PIONEER_LETTERS):
-                    mega_jackpot = True
-                    score += POINTS_MEGA_JACKPOT
+                    pioneer_flash_index = collected - 1
+                    pioneer_flash_until = time.time() + PIONEER_FLASH_DURATION
+                    score += POINTS_GOAL
+                    score_pop_until = time.time() + SCORE_POP_DURATION
                     update_high_score()
                     play_sound("jackpot")
-                    collected = 0
-                    mega_jackpot = False
+                if collected == len(PIONEER_LETTERS):
+                    mega_jackpot = True
+                    mega_jackpot_until = time.time() + MEGA_JACKPOT_DURATION
+                    score += POINTS_MEGA_JACKPOT
+                    update_high_score()
+                    score_pop_until = time.time() + SCORE_POP_DURATION
+                    play_sound("jackpot")
             elif e.key == pygame.K_b:
                 # Manual drain test
                 on_ball_drained()
@@ -541,6 +587,10 @@ def handle_pygame_events() -> bool:
                 balls_left = INITIAL_BALLS
                 collected = 0
                 mega_jackpot = False
+                score_pop_until = 0.0
+                pioneer_flash_index = -1
+                pioneer_flash_until = 0.0
+                mega_jackpot_until = 0.0
             elif e.key == pygame.K_d:
                 # Toggle debug overlay
                 debug_mode = not debug_mode
@@ -558,12 +608,17 @@ def handle_keyboard_test_hit() -> None:
 def check_game_over() -> None:
     """If no balls left, show game over screen then reset game state (keep high score)."""
     global score, balls_left, collected, mega_jackpot
+    global score_pop_until, pioneer_flash_index, pioneer_flash_until, mega_jackpot_until
     if balls_left <= 0:
         show_game_over_screen()
         score = 0
         balls_left = INITIAL_BALLS
         collected = 0
         mega_jackpot = False
+        score_pop_until = 0.0
+        pioneer_flash_index = -1
+        pioneer_flash_until = 0.0
+        mega_jackpot_until = 0.0
 
 
 def render_frame() -> None:
@@ -575,7 +630,22 @@ def render_frame() -> None:
 
 def close_hardware() -> None:
     """Release all GPIO/hardware resources."""
-    for device in (targets_any, bumper1, bumper2, gate1, gate2, ball_drain, jackpot_gate, popper_gate):
+    for device in (
+        targets_any,
+        bumper1,
+        bumper2,
+        gate1,
+        gate2,
+        ball_drain,
+        jackpot_gate,
+        popper_gate,
+        target1,
+        target2,
+        target3,
+        goal_sensor,
+        col,
+        service_button,
+    ):
         device.close()
 
 
@@ -586,7 +656,7 @@ def close_hardware() -> None:
 
 def main() -> None:
     """Initialize hardware, run start/test/gameplay flow, then exit cleanly."""
-    global current_mode
+    global current_mode, mega_jackpot, collected, mega_jackpot_until
 
     initialize_all_gates()
     # Ensure the 3‑target drop bank starts with all targets in the UP position.
@@ -624,6 +694,10 @@ def main() -> None:
     current_mode = SystemMode.GAMEPLAY_MODE
     running = True
     while running:
+        # End MEGA JACKPOT display after duration
+        if mega_jackpot and mega_jackpot_until > 0 and time.time() >= mega_jackpot_until:
+            mega_jackpot = False
+            collected = 0
         running = handle_pygame_events()
         poll_hardware_inputs()
         handle_keyboard_test_hit()
