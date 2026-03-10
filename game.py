@@ -28,6 +28,8 @@ from hardware import (
     target2,
     target3,
     targets_any,
+    goal_gate,
+    ball_kicker_gate,
 )
 from test_mode import TestModeContext, run_test_mode
 
@@ -68,6 +70,9 @@ SCORE_POP_DURATION = 0.2
 PIONEER_FLASH_DURATION = 0.4
 MEGA_JACKPOT_DURATION = 1.5
 MEGA_JACKPOT_FLASH_DURATION = 0.35
+
+# Delay (seconds) before firing the additional goal solenoid
+GOAL_SOLENOID_DELAY = 2.0
 
 # Game state
 INITIAL_BALLS = 2
@@ -365,12 +370,12 @@ def on_goal_scored() -> None:
 
     play_sound("jackpot")
 
-    # Fire popper solenoid to pop ball up to ramp
-    threading.Thread(
-        target=pulse_solenoid,
-        args=(popper_gate, POPPER_PULSE_TIME),
-        daemon=True,
-    ).start()
+    # After a short delay, fire the popper solenoid once to pop the ball up the ramp.
+    def _delayed_popper() -> None:
+        time.sleep(GOAL_SOLENOID_DELAY)
+        pulse_solenoid(popper_gate, POPPER_PULSE_TIME)
+
+    threading.Thread(target=_delayed_popper, daemon=True).start()
 
     if collected == len(PIONEER_LETTERS):
         mega_jackpot = True
@@ -409,10 +414,17 @@ def on_drop_target_hit() -> None:
 
 
 def on_ball_drained() -> None:
-    """Ball in trough: decrement balls left."""
+    """Ball in trough: decrement balls left, then (after a delay) kick a new ball."""
     global balls_left
     if balls_left > 0:
         balls_left -= 1
+
+        # After a short delay, fire the ball‑kicker solenoid once to launch a new ball.
+        def _delayed_ball_kicker() -> None:
+            time.sleep(GOAL_SOLENOID_DELAY)
+            pulse_solenoid(ball_kicker_gate, SOLENOID_PULSE_TIME)
+
+        threading.Thread(target=_delayed_ball_kicker, daemon=True).start()
 
 
 def poll_hardware_inputs() -> None:

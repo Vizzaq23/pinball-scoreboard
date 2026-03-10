@@ -82,6 +82,22 @@ try:
     # Explicitly ensure gate is OFF immediately after initialization
     popper_gate.off()
 
+    # Ball‑kicker solenoid that launches a new ball from the trough
+    # when the ball drain switch is triggered.
+    BALL_KICKER_PIN = 18
+    ball_kicker_gate = DigitalOutputDevice(
+        BALL_KICKER_PIN, active_high=True, initial_value=False
+    )
+    ball_kicker_gate.off()
+
+    # Additional goal‑related solenoid that fires after a delay when the
+    # goal sensor is triggered. Uses a free GPIO pin.
+    GOAL_GATE_PIN = 27
+    goal_gate = DigitalOutputDevice(
+        GOAL_GATE_PIN, active_high=True, initial_value=False
+    )
+    goal_gate.off()
+
     # Dedicated service button to enter TEST MODE (optional hardware)
     # Wire a momentary switch between this pin and GND.
     SERVICE_BUTTON_PIN = 21
@@ -124,6 +140,8 @@ except Exception as e:
     col = MockGate()
     jackpot_gate = MockGate()
     popper_gate = MockGate()
+    goal_gate = MockGate()
+    ball_kicker_gate = MockGate()
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +157,8 @@ def initialize_all_gates() -> None:
         col.off()
         jackpot_gate.off()
         popper_gate.off()
+        goal_gate.off()
+        ball_kicker_gate.off()
 
 
 def pulse_solenoid(gate: Any, pulse_time: float) -> None:
