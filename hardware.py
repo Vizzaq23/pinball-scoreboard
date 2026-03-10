@@ -73,14 +73,17 @@ try:
     # Explicitly ensure gate is OFF immediately after initialization
     jackpot_gate.off()
 
-    # Popper solenoid that fires when jackpot sensor (goal_sensor) is hit
-    # to pop the ball up to a ramp.
+    # Popper / goal solenoid that fires when jackpot sensor (goal_sensor) is hit
+    # to pop the ball up to a ramp. The "goal gate" uses the same physical coil.
     POPPER_GATE = 25
     popper_gate = DigitalOutputDevice(
         POPPER_GATE, active_high=True, initial_value=False
     )
     # Explicitly ensure gate is OFF immediately after initialization
     popper_gate.off()
+
+    # Goal gate is electrically the same coil as the popper solenoid.
+    goal_gate = popper_gate
 
     # Ball‑kicker solenoid that launches a new ball from the trough
     # when the ball drain switch is triggered.
@@ -89,14 +92,6 @@ try:
         BALL_KICKER_PIN, active_high=True, initial_value=False
     )
     ball_kicker_gate.off()
-
-    # Additional goal‑related solenoid that fires after a delay when the
-    # goal sensor is triggered. Uses a free GPIO pin.
-    GOAL_GATE_PIN = 27
-    goal_gate = DigitalOutputDevice(
-        GOAL_GATE_PIN, active_high=True, initial_value=False
-    )
-    goal_gate.off()
 
     # Dedicated service button to enter TEST MODE (optional hardware)
     # Wire a momentary switch between this pin and GND.
