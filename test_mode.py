@@ -22,6 +22,8 @@ from hardware import (
     ball_drain,
     jackpot_gate,
     popper_gate,
+    goal_gate,
+    ball_kicker_gate,
     pulse_solenoid,
 )
 
@@ -30,7 +32,7 @@ from hardware import (
 # TEST MODE CONSTANTS
 # ============================================================
 
-TEST_SOLENOID_PULSE_TIME = 0.08  # short, safe pulse
+TEST_SOLENOID_PULSE_TIME = 0.08  # short, safe pulse for most coils
 TEST_SOLENOID_COOLDOWN = 0.5    # minimum delay between fires (per solenoid)
 TEST_VOLUME_STEP = 0.1
 
@@ -46,10 +48,14 @@ SWITCH_LIST = [
 ]
 
 SOLENOID_LIST = [
-    ("Gate 1 (Bumper 1)", gate1),
-    ("Gate 2 (Bumper 2)", gate2),
-    ("Jackpot Reset", jackpot_gate),
-    ("Popper (Ramp)", popper_gate),
+    ("Gate 1 (Bumper 1)", gate1, TEST_SOLENOID_PULSE_TIME),
+    ("Gate 2 (Bumper 2)", gate2, TEST_SOLENOID_PULSE_TIME),
+    # Jackpot reset coil needs a longer, stronger pull to fully lift the drop‑target bank.
+    # Using a longer pulse here only in test mode so gameplay timing remains unchanged.
+    ("Jackpot Reset", jackpot_gate, 0.25),
+    ("Popper (Ramp)", popper_gate, TEST_SOLENOID_PULSE_TIME),
+    ("Goal Gate", goal_gate, TEST_SOLENOID_PULSE_TIME),
+    ("Ball Kicker ", ball_kicker_gate, TEST_SOLENOID_PULSE_TIME),
 ]
 
 TEST_SOUND_NAMES = ["hit", "bumper", "jackpot"]
@@ -181,11 +187,11 @@ def run_test_mode(ctx: TestModeContext) -> None:
                     elif e.key in (pygame.K_SPACE, pygame.K_RETURN):
                         last = last_solenoid_fire[solenoid_index]
                         if now - last >= TEST_SOLENOID_COOLDOWN:
-                            name, gate = SOLENOID_LIST[solenoid_index]
-                            print(f"[TEST] Firing solenoid: {name}")
+                            name, gate, pulse_time = SOLENOID_LIST[solenoid_index]
+                            print(f"[TEST] Firing solenoid: {name} (pulse={pulse_time:.2f}s)")
                             threading.Thread(
                                 target=pulse_solenoid,
-                                args=(gate, TEST_SOLENOID_PULSE_TIME),
+                                args=(gate, pulse_time),
                                 daemon=True,
                             ).start()
                             last_solenoid_fire[solenoid_index] = now
@@ -237,7 +243,7 @@ def run_test_mode(ctx: TestModeContext) -> None:
                 "UP/DOWN to select, SPACE/ENTER to fire (safety cooldown).",
             )
             y = 150
-            for idx, (name, _gate) in enumerate(SOLENOID_LIST):
+            for idx, (name, _gate, _pulse) in enumerate(SOLENOID_LIST):
                 prefix = ">" if idx == solenoid_index else " "
                 color = COLOR_SELECTED if idx == solenoid_index else COLOR_NORMAL
                 label = ctx.small_font.render(f"{prefix} {name}", True, color)
