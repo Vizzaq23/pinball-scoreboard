@@ -8,5 +8,5 @@ if not USE_GPIO:
 print("Pulsing gate1 every 2 seconds. Ctrl+C to stop.")
 
 while True:
-    pulse_solenoid(gate1, 0.2)  # 200 ms pulse
+    pulse_solenoid(gate1, 0.25)  # 250 ms pulse
     time.sleep(2)
