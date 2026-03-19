@@ -10,6 +10,7 @@ import pygame
 
 from audio import play_sound
 from hardware import (
+    USE_GPIO,
     targets_any,
     bumper1,
     bumper2,
@@ -188,6 +189,10 @@ def run_test_mode(ctx: TestModeContext) -> None:
                         last = last_solenoid_fire[solenoid_index]
                         if now - last >= TEST_SOLENOID_COOLDOWN:
                             name, gate, pulse_time = SOLENOID_LIST[solenoid_index]
+                            if not USE_GPIO:
+                                print(
+                                    "[TEST] WARNING: GPIO is in mock mode (USE_GPIO=False). Solenoids will not fire."
+                                )
                             print(f"[TEST] Firing solenoid: {name} (pulse={pulse_time:.2f}s)")
                             threading.Thread(
                                 target=pulse_solenoid,
