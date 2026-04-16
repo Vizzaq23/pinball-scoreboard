@@ -1,6 +1,7 @@
 # hardware.py - GPIO inputs and outputs for Raspberry Pi pinball hardware.
 # Falls back to mocks when GPIO is not available (e.g. on Windows).
 
+import atexit
 import threading
 import time
 from typing import Any
@@ -104,6 +105,16 @@ try:
     START_BUTTON_PIN = 27
     start_button = Button(START_BUTTON_PIN, pull_up=True, bounce_time=0.15)
 
+    # BCM numbers for all N-MOS / coil gate outputs (kept off the bus at process exit).
+    _OUTPUT_BCM_PINS = (
+        BUMPER1_GATE,
+        BUMPER2_GATE,
+        COL_PIN,
+        JACKPOT_RESET_GATE,
+        POPPER_GATE,
+        BALL_KICKER_PIN,
+    )
+
     USE_GPIO = True
 
 except Exception as e:
@@ -143,6 +154,60 @@ except Exception as e:
     jackpot_gate = MockGate()
     popper_gate = MockGate()
     ball_kicker_gate = MockGate()
+
+    _OUTPUT_BCM_PINS = ()
+
+
+# ---------------------------------------------------------------------------
+# gpiozero exit: keep coil gates low (see _patch_gpiozero_atexit_for_coil_pins)
+# ---------------------------------------------------------------------------
+
+
+def _drive_coil_pins_low_after_gpiozero() -> None:
+    """After gpiozero releases pins, drive BCM outputs low so MOSFET gates do not float on.
+
+    Floating lines often read high enough to keep an N-channel gate on (e.g. bumper 1 / GPIO 5).
+    Uses RPi.GPIO after gpiozero teardown; omits GPIO.cleanup() so lines stay outputs at LOW
+    until the process exits (kernel may still reclaim them). If this fails, add ~10k pull-downs
+    on each gate at the board.
+    """
+    if not USE_GPIO or not _OUTPUT_BCM_PINS:
+        return
+    try:
+        import RPi.GPIO as GPIO  # type: ignore[import-not-found]
+
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BCM)
+        for pin in _OUTPUT_BCM_PINS:
+            GPIO.setup(pin, GPIO.OUT)
+            GPIO.output(pin, GPIO.LOW)
+    except Exception:
+        pass
+
+
+def _patch_gpiozero_atexit_for_coil_pins() -> None:
+    """Wrap gpiozero's atexit so process exit does not leave coil pins floating high."""
+    if not USE_GPIO:
+        return
+    try:
+        from gpiozero import devices as gz_devices
+    except ImportError:
+        return
+
+    orig = gz_devices._shutdown
+    try:
+        atexit.unregister(orig)
+    except ValueError:
+        return
+
+    def _shutdown_with_coil_pins_held_low() -> None:
+        orig()
+        _drive_coil_pins_low_after_gpiozero()
+
+    atexit.register(_shutdown_with_coil_pins_held_low)
+
+
+_patch_gpiozero_atexit_for_coil_pins()
 
 
 # ---------------------------------------------------------------------------
