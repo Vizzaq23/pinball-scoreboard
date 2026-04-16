@@ -67,6 +67,8 @@ JACKPOT_RESET_COOLDOWN = 0.75
 # Require all three drop targets to read DOWN continuously this long before firing reset
 # (avoids missing the event when debounce / column settle never aligns on one frame).
 DROP_TARGET_ALL_DOWN_HOLD_TIME = 1.0
+# After a commanded reset pulse, suppress auto-reset checks briefly to avoid startup double-fires.
+DROP_TARGET_AUTO_RESET_SUPPRESS_TIME = 2.0
 POPPER_PULSE_TIME = 0.1
 BLINK_INTERVAL_MS = 500
 FADE_STEP_START = 6
@@ -172,6 +174,7 @@ drop_targets_down = [False, False, False]
 # Jackpot reset: fire once while all-down (after sustained hold), then re-arm when any comes up.
 drop_target_reset_armed: bool = True
 all_drop_targets_down_since: float | None = None
+drop_target_auto_reset_enabled_at: float = 0.0
 last_jackpot_reset_pulse_mono: float = 0.0
 
 # Debouncing
@@ -404,6 +407,7 @@ def on_goal_scored() -> None:
 def on_drop_target_hit() -> None:
     """Scan drop targets; pulse reset after all-down is sustained, then re-arm when any comes up."""
     global drop_targets_down, drop_target_reset_armed, all_drop_targets_down_since
+    global drop_target_auto_reset_enabled_at
     global last_jackpot_reset_pulse_mono
     global target1_last_state, target2_last_state, target3_last_state
 
@@ -418,6 +422,9 @@ def on_drop_target_hit() -> None:
     # Explicit condition requested: trigger reset when no target is UP.
     all_not_up = not any(target_up_states)
     now_mono = time.monotonic()
+
+    if now_mono < drop_target_auto_reset_enabled_at:
+        return
 
     if not all_not_up:
         all_drop_targets_down_since = None
@@ -470,9 +477,11 @@ def sync_goal_sensor_edge_after_reset() -> None:
 def sync_drop_targets_after_reset() -> None:
     """Clear jackpot-reset edge bookkeeping after a game reset (must run with GPIO; mirrors column read)."""
     global drop_target_reset_armed, drop_targets_down, all_drop_targets_down_since
+    global drop_target_auto_reset_enabled_at
     if not USE_GPIO:
         drop_target_reset_armed = True
         all_drop_targets_down_since = None
+        drop_target_auto_reset_enabled_at = 0.0
         return
     col.on()
     time.sleep(0.002)
@@ -481,6 +490,7 @@ def sync_drop_targets_after_reset() -> None:
     col.off()
     drop_target_reset_armed = True
     all_drop_targets_down_since = None
+    drop_target_auto_reset_enabled_at = 0.0
 
 
 def poll_hardware_inputs() -> None:
@@ -759,11 +769,14 @@ def close_hardware() -> None:
 def fire_drop_target_reset() -> None:
     """Pulse the drop-target reset solenoid to raise the bank (best-effort)."""
     global last_jackpot_reset_pulse_mono, drop_target_reset_armed, all_drop_targets_down_since
+    global drop_target_auto_reset_enabled_at
     if not USE_GPIO:
         return
-    last_jackpot_reset_pulse_mono = time.monotonic()
+    now_mono = time.monotonic()
+    last_jackpot_reset_pulse_mono = now_mono
     drop_target_reset_armed = True
     all_drop_targets_down_since = None
+    drop_target_auto_reset_enabled_at = now_mono + DROP_TARGET_AUTO_RESET_SUPPRESS_TIME
     threading.Thread(
         target=pulse_solenoid,
         args=(jackpot_gate, JACKPOT_GATE_PULSE_TIME),
