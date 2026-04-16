@@ -66,10 +66,10 @@ JACKPOT_GATE_PULSE_TIME = 0.60
 # Minimum time between jackpot-reset coil pulses (debounces switch chatter).
 JACKPOT_RESET_COOLDOWN = 0.75
 # Require all three drop targets to read DOWN continuously this long before firing reset
-# (avoids missing the event when debounce / column settle never aligns on one frame).
-DROP_TARGET_ALL_DOWN_HOLD_TIME = 1.0
-# After a commanded reset pulse, suppress auto-reset checks briefly to avoid startup double-fires.
-DROP_TARGET_AUTO_RESET_SUPPRESS_TIME = 2.0
+# (debounces chatter; keep short enough that a full bank still registers reliably).
+DROP_TARGET_ALL_DOWN_HOLD_TIME = 0.4
+# After a commanded reset pulse, suppress auto-reset briefly to avoid startup double-fires.
+DROP_TARGET_AUTO_RESET_SUPPRESS_TIME = 1.0
 POPPER_PULSE_TIME = 0.1
 BLINK_INTERVAL_MS = 500
 FADE_STEP_START = 6
@@ -439,12 +439,14 @@ def on_drop_target_hit() -> None:
     all_down = _all_drop_targets_physically_down(raw_pressed)
     now_mono = time.monotonic()
 
-    if now_mono < drop_target_auto_reset_enabled_at:
-        return
-
+    # Always clear timing when not all-down, even during post-reset suppress (so we re-arm correctly).
     if not all_down:
         all_drop_targets_down_since = None
         drop_target_reset_armed = True
+        return
+
+    # All three read "down": honor suppress only for firing / hold timer (game start / commanded reset).
+    if now_mono < drop_target_auto_reset_enabled_at:
         return
 
     if all_drop_targets_down_since is None:
