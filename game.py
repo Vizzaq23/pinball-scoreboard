@@ -73,8 +73,8 @@ PIONEER_FLASH_DURATION = 0.4
 MEGA_JACKPOT_DURATION = 1.5
 MEGA_JACKPOT_FLASH_DURATION = 0.35
 
-# Delay before firing the goal popper (short so firing happens while the ball is still at the sensor).
-GOAL_POPPER_DELAY = 0.2
+# Delay before firing the goal popper after goal sensor goes high.
+GOAL_POPPER_DELAY = 2.0
 # Ball trough kicker can wait longer so the ball settles before launch.
 TROUGH_KICK_DELAY = 2.0
 
@@ -166,8 +166,8 @@ debug_mode: bool = False
 
 # Drop target state: index = physical drop; False = up, True = down
 drop_targets_down = [False, False, False]
-# Jackpot reset: fire on transition to "all down".
-prev_all_drop_targets_down: bool = False
+# Jackpot reset: fire once while all-down, then re-arm when any target comes back up.
+drop_target_reset_armed: bool = True
 last_jackpot_reset_pulse_mono: float = 0.0
 
 # Debouncing
@@ -398,8 +398,8 @@ def on_goal_scored() -> None:
 
 
 def on_drop_target_hit() -> None:
-    """Scan drop targets; pulse reset only on transition to all-down."""
-    global drop_targets_down, prev_all_drop_targets_down
+    """Scan drop targets; pulse reset once when all-down, then wait for any-up to re-arm."""
+    global drop_targets_down, drop_target_reset_armed
     global last_jackpot_reset_pulse_mono
     global target1_last_state, target2_last_state, target3_last_state
 
@@ -414,17 +414,18 @@ def on_drop_target_hit() -> None:
 
     all_down = all(drop_targets_down)
     now_mono = time.monotonic()
-    should_fire = all_down and not prev_all_drop_targets_down
+    should_fire = all_down and drop_target_reset_armed
 
     if should_fire and now_mono - last_jackpot_reset_pulse_mono >= JACKPOT_RESET_COOLDOWN:
         last_jackpot_reset_pulse_mono = now_mono
+        drop_target_reset_armed = False
         threading.Thread(
             target=pulse_solenoid,
             args=(jackpot_gate, JACKPOT_GATE_PULSE_TIME),
             daemon=True,
         ).start()
-
-    prev_all_drop_targets_down = all_down
+    elif not all_down:
+        drop_target_reset_armed = True
 
 
 def on_ball_drained() -> None:
@@ -453,16 +454,16 @@ def sync_goal_sensor_edge_after_reset() -> None:
 
 def sync_drop_targets_after_reset() -> None:
     """Clear jackpot-reset edge bookkeeping after a game reset (must run with GPIO; mirrors column read)."""
-    global prev_all_drop_targets_down, drop_targets_down
+    global drop_target_reset_armed, drop_targets_down
     if not USE_GPIO:
-        prev_all_drop_targets_down = False
+        drop_target_reset_armed = True
         return
     col.on()
     time.sleep(0.002)
     for i, btn in enumerate((target1, target2, target3)):
         drop_targets_down[i] = not btn.is_pressed
     col.off()
-    prev_all_drop_targets_down = all(drop_targets_down)
+    drop_target_reset_armed = True
 
 
 def poll_hardware_inputs() -> None:
@@ -740,12 +741,11 @@ def close_hardware() -> None:
 
 def fire_drop_target_reset() -> None:
     """Pulse the drop-target reset solenoid to raise the bank (best-effort)."""
-    global last_jackpot_reset_pulse_mono, prev_all_drop_targets_down
+    global last_jackpot_reset_pulse_mono, drop_target_reset_armed
     if not USE_GPIO:
         return
     last_jackpot_reset_pulse_mono = time.monotonic()
-    # Expect a bank-up after the pulse; suppress a duplicate "all down" edge until inputs change.
-    prev_all_drop_targets_down = True
+    drop_target_reset_armed = True
     threading.Thread(
         target=pulse_solenoid,
         args=(jackpot_gate, JACKPOT_GATE_PULSE_TIME),
