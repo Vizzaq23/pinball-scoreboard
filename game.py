@@ -163,6 +163,8 @@ debug_mode: bool = False
 
 # Drop target state: index = physical drop; False = up, True = down
 drop_targets_down = [False, False, False]
+# Latch to prevent retriggering while all 3 targets remain down.
+drop_target_reset_armed: bool = True
 
 # Debouncing
 last_hit: float = 0.0
@@ -392,30 +394,30 @@ def on_goal_scored() -> None:
 
 
 def on_drop_target_hit() -> None:
-    """Scan the 3 drop targets; on edge-down mark target down; when all down, fire reset."""
-    global drop_targets_down, target1_last_state, target2_last_state, target3_last_state
+    """Scan drop targets; fire reset once when all 3 read DOWN, then re-arm when any target comes UP."""
+    global drop_targets_down, drop_target_reset_armed
+    global target1_last_state, target2_last_state, target3_last_state
 
     switches = [target1, target2, target3]
-    last_states = [target1_last_state, target2_last_state, target3_last_state]
-
-    for i, (btn, last) in enumerate(zip(switches, last_states)):
-        # Sensor is active (pressed) when target is UP, inactive (not pressed) when DOWN
-        # Detect transition from pressed (UP) to not pressed (DOWN)
-        if not btn.is_pressed and last and not drop_targets_down[i]:
-            drop_targets_down[i] = True
+    # Sensor is active (pressed) when target is UP, inactive (not pressed) when DOWN.
+    # Level tracking is more robust than edge-only tracking.
+    for i, btn in enumerate(switches):
+        drop_targets_down[i] = not btn.is_pressed
 
     target1_last_state = target1.is_pressed
     target2_last_state = target2.is_pressed
     target3_last_state = target3.is_pressed
 
-    if all(drop_targets_down):
+    if all(drop_targets_down) and drop_target_reset_armed:
         threading.Thread(
             target=pulse_solenoid,
             args=(jackpot_gate, JACKPOT_GATE_PULSE_TIME),
             daemon=True,
         ).start()
-        drop_targets_down = [False, False, False]
+        drop_target_reset_armed = False
         time.sleep(DROP_TARGET_RESET_DELAY)
+    elif not all(drop_targets_down):
+        drop_target_reset_armed = True
 
 
 def on_ball_drained() -> None:
@@ -687,28 +689,29 @@ def render_frame() -> None:
 
 
 def close_hardware() -> None:
-    """Release all GPIO/hardware resources."""
+    """De-energize coils and release input GPIO; leave coil pins driven low.
+
+    Releasing MOSFET-gate outputs with ``DigitalOutputDevice.close()`` turns the pin
+    into a floating input. Floating gates often read high enough to hold MOSFETs on
+    (e.g. bumper gate 1 / GPIO 5, popper / GPIO 25). We keep outputs configured LOW
+    instead of closing them. For power-up before Python runs, add ~10k pull-downs
+    on each gate line at the driver board.
+    """
     if USE_GPIO:
-        # Leave all coil outputs de-energized before releasing pins (avoids exit glitches).
         for out in (gate1, gate2, col, jackpot_gate, popper_gate, ball_kicker_gate):
             out.off()
+    # Close switches/sensors only; do not close coil/LED outputs (see docstring).
     for device in (
         targets_any,
         bumper1,
         bumper2,
-        gate1,
-        gate2,
         ball_drain,
-        jackpot_gate,
-        popper_gate,
         target1,
         target2,
         target3,
         goal_sensor,
-        col,
         service_button,
         start_button,
-        ball_kicker_gate,
     ):
         device.close()
 
@@ -734,47 +737,47 @@ def main() -> None:
     """Initialize hardware, run start/test/gameplay flow, then exit cleanly."""
     global current_mode, mega_jackpot, collected, mega_jackpot_until
 
-    initialize_all_gates()
-    start_music()
-    chosen_mode = show_start_screen()
-
-    if chosen_mode == SystemMode.TEST_MODE:
-        current_mode = SystemMode.TEST_MODE
-        test_ctx = TestModeContext(
-            screen=SCREEN,
-            clock=clock,
-            width=SCREEN_WIDTH,
-            height=SCREEN_HEIGHT,
-            rink_img=rink_img,
-            jumbo_img=jumbo_img,
-            jumbo_x=jumbo_x,
-            jumbo_y=jumbo_y,
-            small_font=small_font,
-            medium_font=medium_font,
-            program_start_time=program_start_time,
-        )
-        run_test_mode(test_ctx)
-        current_mode = SystemMode.ATTRACT_MODE
+    try:
+        initialize_all_gates()
+        start_music()
         chosen_mode = show_start_screen()
 
-    current_mode = SystemMode.GAMEPLAY_MODE
-    # Raise the drop-target bank at the start of each new game.
-    fire_drop_target_reset()
-    running = True
-    while running:
-        # End MEGA JACKPOT display after duration
-        if mega_jackpot and mega_jackpot_until > 0 and time.time() >= mega_jackpot_until:
-            mega_jackpot = False
-            collected = 0
-        running = handle_pygame_events()
-        poll_hardware_inputs()
-        handle_keyboard_test_hit()
-        check_game_over()
-        render_frame()
+        if chosen_mode == SystemMode.TEST_MODE:
+            current_mode = SystemMode.TEST_MODE
+            test_ctx = TestModeContext(
+                screen=SCREEN,
+                clock=clock,
+                width=SCREEN_WIDTH,
+                height=SCREEN_HEIGHT,
+                rink_img=rink_img,
+                jumbo_img=jumbo_img,
+                jumbo_x=jumbo_x,
+                jumbo_y=jumbo_y,
+                small_font=small_font,
+                medium_font=medium_font,
+                program_start_time=program_start_time,
+            )
+            run_test_mode(test_ctx)
+            current_mode = SystemMode.ATTRACT_MODE
+            chosen_mode = show_start_screen()
 
-    close_hardware()
-    pygame.quit()
-    sys.exit(0)
+        current_mode = SystemMode.GAMEPLAY_MODE
+        # Raise the drop-target bank at the start of each new game.
+        fire_drop_target_reset()
+        running = True
+        while running:
+            # End MEGA JACKPOT display after duration
+            if mega_jackpot and mega_jackpot_until > 0 and time.time() >= mega_jackpot_until:
+                mega_jackpot = False
+                collected = 0
+            running = handle_pygame_events()
+            poll_hardware_inputs()
+            handle_keyboard_test_hit()
+            check_game_over()
+            render_frame()
+    finally:
+        close_hardware()
+        pygame.quit()
 
 
 if __name__ == "__main__":
