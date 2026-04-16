@@ -76,8 +76,9 @@ MEGA_JACKPOT_FLASH_DURATION = 0.35
 
 # Delay before firing the goal popper after goal sensor goes high.
 GOAL_POPPER_DELAY = 2.0
-# Ball trough kicker can wait longer so the ball settles before launch.
-TROUGH_KICK_DELAY = 2.0
+# After the last ball drains (game over), fire the kicker this many times, this many seconds apart.
+GAME_OVER_KICK_COUNT = 2
+GAME_OVER_KICK_INTERVAL_S = 2.0
 
 # Game state
 INITIAL_BALLS = 2
@@ -449,19 +450,22 @@ def on_drop_target_hit() -> None:
 
 
 def on_ball_drained() -> None:
-    """Ball in trough: decrement balls left; kick a new ball only if any balls remain."""
+    """Ball in trough: decrement balls left; kicker runs only after the last ball (game over), twice, 2s apart."""
     global balls_left
     if balls_left <= 0:
         return
     balls_left -= 1
 
     if balls_left > 0:
+        return
 
-        def _delayed_ball_kicker() -> None:
-            time.sleep(TROUGH_KICK_DELAY)
+    def _game_over_kicks() -> None:
+        # Not immediate on drain: first pulse after GAME_OVER_KICK_INTERVAL_S, then second after the same gap.
+        for _ in range(GAME_OVER_KICK_COUNT):
+            time.sleep(GAME_OVER_KICK_INTERVAL_S)
             pulse_solenoid(ball_kicker_gate, SOLENOID_PULSE_TIME)
 
-        threading.Thread(target=_delayed_ball_kicker, daemon=True).start()
+    threading.Thread(target=_game_over_kicks, daemon=True).start()
 
 
 def sync_goal_sensor_edge_after_reset() -> None:
