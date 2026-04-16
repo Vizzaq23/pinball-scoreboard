@@ -69,7 +69,7 @@ JACKPOT_RESET_COOLDOWN = 0.75
 # (debounces chatter; keep short enough that a full bank still registers reliably).
 DROP_TARGET_ALL_DOWN_HOLD_TIME = 0.4
 # After a commanded reset pulse, suppress auto-reset briefly to avoid startup double-fires.
-DROP_TARGET_AUTO_RESET_SUPPRESS_TIME = 1.0
+DROP_TARGET_AUTO_RESET_SUPPRESS_TIME = 2.0
 POPPER_PULSE_TIME = 0.1
 BLINK_INTERVAL_MS = 500
 FADE_STEP_START = 6
@@ -505,7 +505,9 @@ def sync_drop_targets_after_reset() -> None:
     for i, p in enumerate(raw_pressed):
         drop_targets_down[i] = p if DROP_TARGET_PRESSED_WHEN_DOWN else not p
     col.off()
-    drop_target_reset_armed = True
+    # If the bank is still reading "all down" immediately after a commanded reset pulse,
+    # keep auto-reset disarmed so we don't double-fire at game start.
+    drop_target_reset_armed = not _all_drop_targets_physically_down(raw_pressed)
     all_drop_targets_down_since = None
     # Note: do not clear drop_target_auto_reset_enabled_at here — it must stay set after
     # fire_drop_target_reset() or the game-start suppress window is wiped and jackpot fires twice.
@@ -794,7 +796,10 @@ def fire_drop_target_reset() -> None:
         return
     now_mono = time.monotonic()
     last_jackpot_reset_pulse_mono = now_mono
-    drop_target_reset_armed = True
+    # Disarm auto-reset until we see at least one target come back up.
+    # Otherwise if the bank still reads "all down" after this pulse, the auto logic can
+    # fire a second time as soon as suppress expires.
+    drop_target_reset_armed = False
     all_drop_targets_down_since = None
     drop_target_auto_reset_enabled_at = now_mono + DROP_TARGET_AUTO_RESET_SUPPRESS_TIME
     threading.Thread(
