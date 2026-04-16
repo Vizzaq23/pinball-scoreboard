@@ -64,8 +64,6 @@ SOLENOID_PULSE_TIME = 0.1
 JACKPOT_GATE_PULSE_TIME = 0.60
 # Minimum time between jackpot-reset coil pulses (debounces switch chatter).
 JACKPOT_RESET_COOLDOWN = 0.75
-# If the bank stays fully dropped after a reset pulse, retry (weak coil / sticky targets).
-DROP_TARGET_STUCK_RETRY_DELAY = 2.5
 POPPER_PULSE_TIME = 0.1
 BLINK_INTERVAL_MS = 500
 FADE_STEP_START = 6
@@ -168,9 +166,8 @@ debug_mode: bool = False
 
 # Drop target state: index = physical drop; False = up, True = down
 drop_targets_down = [False, False, False]
-# Jackpot reset: fire on transition to "all down" and optional retry if the bank stays stuck down.
+# Jackpot reset: fire on transition to "all down".
 prev_all_drop_targets_down: bool = False
-all_drop_targets_stuck_since: float | None = None
 last_jackpot_reset_pulse_mono: float = 0.0
 
 # Debouncing
@@ -401,8 +398,8 @@ def on_goal_scored() -> None:
 
 
 def on_drop_target_hit() -> None:
-    """Scan drop targets; pulse reset on transition to all-down, plus retry if the bank stays stuck."""
-    global drop_targets_down, prev_all_drop_targets_down, all_drop_targets_stuck_since
+    """Scan drop targets; pulse reset only on transition to all-down."""
+    global drop_targets_down, prev_all_drop_targets_down
     global last_jackpot_reset_pulse_mono
     global target1_last_state, target2_last_state, target3_last_state
 
@@ -417,17 +414,7 @@ def on_drop_target_hit() -> None:
 
     all_down = all(drop_targets_down)
     now_mono = time.monotonic()
-    should_fire = False
-    if all_down:
-        if all_drop_targets_stuck_since is None:
-            all_drop_targets_stuck_since = now_mono
-        if not prev_all_drop_targets_down:
-            should_fire = True
-        elif now_mono - all_drop_targets_stuck_since >= DROP_TARGET_STUCK_RETRY_DELAY:
-            should_fire = True
-            all_drop_targets_stuck_since = now_mono
-    else:
-        all_drop_targets_stuck_since = None
+    should_fire = all_down and not prev_all_drop_targets_down
 
     if should_fire and now_mono - last_jackpot_reset_pulse_mono >= JACKPOT_RESET_COOLDOWN:
         last_jackpot_reset_pulse_mono = now_mono
@@ -466,8 +453,7 @@ def sync_goal_sensor_edge_after_reset() -> None:
 
 def sync_drop_targets_after_reset() -> None:
     """Clear jackpot-reset edge bookkeeping after a game reset (must run with GPIO; mirrors column read)."""
-    global prev_all_drop_targets_down, all_drop_targets_stuck_since, drop_targets_down
-    all_drop_targets_stuck_since = None
+    global prev_all_drop_targets_down, drop_targets_down
     if not USE_GPIO:
         prev_all_drop_targets_down = False
         return
@@ -754,11 +740,10 @@ def close_hardware() -> None:
 
 def fire_drop_target_reset() -> None:
     """Pulse the drop-target reset solenoid to raise the bank (best-effort)."""
-    global last_jackpot_reset_pulse_mono, prev_all_drop_targets_down, all_drop_targets_stuck_since
+    global last_jackpot_reset_pulse_mono, prev_all_drop_targets_down
     if not USE_GPIO:
         return
     last_jackpot_reset_pulse_mono = time.monotonic()
-    all_drop_targets_stuck_since = None
     # Expect a bank-up after the pulse; suppress a duplicate "all down" edge until inputs change.
     prev_all_drop_targets_down = True
     threading.Thread(
