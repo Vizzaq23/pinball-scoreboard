@@ -23,7 +23,6 @@ from hardware import (
     ball_drain,
     jackpot_gate,
     popper_gate,
-    goal_gate,
     ball_kicker_gate,
     pulse_solenoid,
 )
@@ -36,6 +35,13 @@ from hardware import (
 TEST_SOLENOID_PULSE_TIME = 0.08  # short, safe pulse for most coils
 TEST_SOLENOID_COOLDOWN = 0.5    # minimum delay between fires (per solenoid)
 TEST_VOLUME_STEP = 0.1
+
+# Main Return and keypad Enter are different SDL keycodes; accept both for fire actions.
+_FIRE_KEYS = (
+    pygame.K_SPACE,
+    pygame.K_RETURN,
+    getattr(pygame, "K_KP_ENTER", pygame.K_RETURN),
+)
 
 SWITCH_LIST = [
     ("Strike Plate", targets_any),
@@ -55,7 +61,6 @@ SOLENOID_LIST = [
     # Using a longer pulse here only in test mode so gameplay timing remains unchanged.
     ("Jackpot Reset", jackpot_gate, 0.25),
     ("Popper (Ramp)", popper_gate, TEST_SOLENOID_PULSE_TIME),
-    ("Goal Gate", goal_gate, TEST_SOLENOID_PULSE_TIME),
     ("Ball Kicker ", ball_kicker_gate, TEST_SOLENOID_PULSE_TIME),
 ]
 
@@ -185,7 +190,7 @@ def run_test_mode(ctx: TestModeContext) -> None:
                         solenoid_index = (solenoid_index - 1) % len(SOLENOID_LIST)
                     elif e.key == pygame.K_DOWN:
                         solenoid_index = (solenoid_index + 1) % len(SOLENOID_LIST)
-                    elif e.key in (pygame.K_SPACE, pygame.K_RETURN):
+                    elif e.key in _FIRE_KEYS:
                         last = last_solenoid_fire[solenoid_index]
                         if now - last >= TEST_SOLENOID_COOLDOWN:
                             name, gate, pulse_time = SOLENOID_LIST[solenoid_index]
@@ -212,7 +217,7 @@ def run_test_mode(ctx: TestModeContext) -> None:
                         sound_index = (sound_index - 1) % len(TEST_SOUND_NAMES)
                     elif e.key == pygame.K_RIGHT:
                         sound_index = (sound_index + 1) % len(TEST_SOUND_NAMES)
-                    elif e.key in (pygame.K_SPACE, pygame.K_RETURN):
+                    elif e.key in _FIRE_KEYS:
                         sound_name = TEST_SOUND_NAMES[sound_index]
                         print(f"[TEST] Playing sound: {sound_name} (vol={test_volume:.2f})")
                         play_sound(sound_name)

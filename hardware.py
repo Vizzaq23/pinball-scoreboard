@@ -1,8 +1,12 @@
 # hardware.py - GPIO inputs and outputs for Raspberry Pi pinball hardware.
 # Falls back to mocks when GPIO is not available (e.g. on Windows).
 
+import threading
 import time
 from typing import Any
+
+# Serialize coil pulses so two drivers never energize at once (power / thermal headroom).
+_solenoid_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # GPIO setup (cross-platform safe)
@@ -82,9 +86,6 @@ try:
     # Explicitly ensure gate is OFF immediately after initialization
     popper_gate.off()
 
-    # Goal gate is electrically the same coil as the popper solenoid.
-    goal_gate = popper_gate
-
     # Ball‑kicker solenoid that launches a new ball from the trough
     # when the ball drain switch is triggered.
     BALL_KICKER_PIN = 18
@@ -97,6 +98,11 @@ try:
     # Wire a momentary switch between this pin and GND.
     SERVICE_BUTTON_PIN = 21
     service_button = Button(SERVICE_BUTTON_PIN, pull_up=True, bounce_time=0.15)
+
+    # Start game from attract / restart after game over (optional hardware)
+    # Wire a momentary switch between this pin and GND (same wiring as service button).
+    START_BUTTON_PIN = 27
+    start_button = Button(START_BUTTON_PIN, pull_up=True, bounce_time=0.15)
 
     USE_GPIO = True
 
@@ -129,13 +135,13 @@ except Exception as e:
     goal_sensor = MockButton()
     ball_drain = MockButton()
     service_button = MockButton()
+    start_button = MockButton()
 
     gate1 = MockGate()
     gate2 = MockGate()
     col = MockGate()
     jackpot_gate = MockGate()
     popper_gate = MockGate()
-    goal_gate = MockGate()
     ball_kicker_gate = MockGate()
 
 
@@ -152,12 +158,12 @@ def initialize_all_gates() -> None:
         col.off()
         jackpot_gate.off()
         popper_gate.off()
-        goal_gate.off()
         ball_kicker_gate.off()
 
 
 def pulse_solenoid(gate: Any, pulse_time: float) -> None:
     """Turn gate on for pulse_time seconds, then off."""
-    gate.on()
-    time.sleep(pulse_time)
-    gate.off()
+    with _solenoid_lock:
+        gate.on()
+        time.sleep(pulse_time)
+        gate.off()

@@ -24,11 +24,11 @@ from hardware import (
     popper_gate,
     pulse_solenoid,
     service_button,
+    start_button,
     target1,
     target2,
     target3,
     targets_any,
-    goal_gate,
     ball_kicker_gate,
 )
 from test_mode import TestModeContext, run_test_mode
@@ -59,6 +59,7 @@ POINTS_MEGA_JACKPOT = 10_000
 # Timing (seconds)
 HIT_COOLDOWN = 0.4
 BUMPER_COOLDOWN = 0.3
+GOAL_COOLDOWN = 0.75
 SOLENOID_PULSE_TIME = 0.1
 JACKPOT_GATE_PULSE_TIME = 0.60
 POPPER_PULSE_TIME = 0.1
@@ -169,6 +170,10 @@ last_bumper_hit: dict = {1: 0.0, 2: 0.0}
 
 # Track previous state of the drain switch to detect edges
 ball_drain_last_state: bool = False
+
+# Goal: edge detect + cooldown (stuck/bouncy switches)
+goal_sensor_last_state: bool = False
+last_goal_time: float = 0.0
 
 # Track previous state of each drop-target switch (edge detection like Arduino s1/s1_last)
 target1_last_state: bool = False
@@ -427,9 +432,19 @@ def on_ball_drained() -> None:
         threading.Thread(target=_delayed_ball_kicker, daemon=True).start()
 
 
+def sync_goal_sensor_edge_after_reset() -> None:
+    """After a full game reset, align edge state with the switch so a held sensor is not a new edge."""
+    global goal_sensor_last_state, last_goal_time
+    last_goal_time = 0.0
+    if USE_GPIO:
+        goal_sensor_last_state = goal_sensor.is_pressed
+    else:
+        goal_sensor_last_state = False
+
+
 def poll_hardware_inputs() -> None:
     """Read GPIO inputs and dispatch to game handlers."""
-    global ball_drain_last_state
+    global ball_drain_last_state, goal_sensor_last_state, last_goal_time
 
     if not USE_GPIO:
         return
@@ -456,10 +471,18 @@ def poll_hardware_inputs() -> None:
     on_drop_target_hit()
     col.off()  # Turn off column after reading drop targets
 
-    # Goal sensor can remain level‑based with a small delay
-    if goal_sensor.is_pressed:
+    # Goal: edge (press) + cooldown — avoids runaway scoring on sticky/bouncy switches
+    current_goal = goal_sensor.is_pressed
+    now = time.time()
+    if (
+        current_goal
+        and not goal_sensor_last_state
+        and now - last_goal_time >= GOAL_COOLDOWN
+    ):
         on_goal_scored()
+        last_goal_time = now
         time.sleep(0.3)
+    goal_sensor_last_state = current_goal
 
     # --- BALL DRAIN SENSOR ---
     # Detect a new press (ball arriving in trough)
@@ -481,6 +504,7 @@ def show_start_screen() -> SystemMode:
     timer = 0.0
     fade_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
     fade_surface.fill((0, 0, 0))
+    start_button_last_state = False
 
     while True:
         SCREEN.blit(rink_img, (0, 0))
@@ -493,7 +517,7 @@ def show_start_screen() -> SystemMode:
         _blit_centered(SCREEN, hs_txt, 300)
 
         if blink:
-            txt = small_font.render("PRESS ENTER TO START", True, (255, 215, 0))
+            txt = small_font.render("PRESS ENTER OR START BUTTON", True, (255, 215, 0))
             _blit_centered(SCREEN, txt, 340)
 
         timer += clock.get_time()
@@ -507,6 +531,18 @@ def show_start_screen() -> SystemMode:
         if USE_GPIO and getattr(service_button, "is_pressed", False):
             current_mode = SystemMode.TEST_MODE
             return SystemMode.TEST_MODE
+
+        if USE_GPIO:
+            current_start = start_button.is_pressed
+            if current_start and not start_button_last_state:
+                for alpha in range(0, 180, FADE_STEP_START):
+                    fade_surface.set_alpha(alpha)
+                    SCREEN.blit(fade_surface, (0, 0))
+                    pygame.display.flip()
+                    clock.tick(FPS)
+                current_mode = SystemMode.GAMEPLAY_MODE
+                return SystemMode.GAMEPLAY_MODE
+            start_button_last_state = current_start
 
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
@@ -541,13 +577,20 @@ def show_game_over_screen() -> None:
         _blit_centered(SCREEN, final_txt, 260)
         hs_txt = small_font.render(f"ALL-TIME HIGH: {high_score}", True, (255, 215, 0))
         _blit_centered(SCREEN, hs_txt, 295)
-        prompt = small_font.render("PRESS ENTER TO RESTART", True, (255, 255, 255))
+        prompt = small_font.render("PRESS ENTER OR START BUTTON TO RESTART", True, (255, 255, 255))
         _blit_centered(SCREEN, prompt, 340)
         SCREEN.blit(fade_surface, (0, 0))
         pygame.display.flip()
         pygame.time.delay(30)
 
+    start_button_last_state = False
     while True:
+        if USE_GPIO:
+            current_start = start_button.is_pressed
+            if current_start and not start_button_last_state:
+                return
+            start_button_last_state = current_start
+
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 pygame.quit()
@@ -603,6 +646,7 @@ def handle_pygame_events() -> bool:
                 pioneer_flash_index = -1
                 pioneer_flash_until = 0.0
                 mega_jackpot_until = 0.0
+                sync_goal_sensor_edge_after_reset()
             elif e.key == pygame.K_d:
                 # Toggle debug overlay
                 debug_mode = not debug_mode
@@ -631,6 +675,7 @@ def check_game_over() -> None:
         pioneer_flash_index = -1
         pioneer_flash_until = 0.0
         mega_jackpot_until = 0.0
+        sync_goal_sensor_edge_after_reset()
 
 
 def render_frame() -> None:
@@ -657,6 +702,7 @@ def close_hardware() -> None:
         goal_sensor,
         col,
         service_button,
+        start_button,
     ):
         device.close()
 
