@@ -65,9 +65,6 @@ SOLENOID_PULSE_TIME = 0.1
 JACKPOT_GATE_PULSE_TIME = 0.60
 # Minimum time between jackpot-reset coil pulses (debounces switch chatter).
 JACKPOT_RESET_COOLDOWN = 0.75
-# Require all three drop targets to read DOWN continuously this long before firing reset.
-# Keep this at 0 for immediate reset when the 3rd target drops.
-DROP_TARGET_ALL_DOWN_HOLD_TIME = 0.0
 # After a commanded reset pulse, suppress auto-reset briefly to avoid startup double-fires.
 DROP_TARGET_AUTO_RESET_SUPPRESS_TIME = 2.0
 POPPER_PULSE_TIME = 0.1
@@ -172,21 +169,13 @@ debug_mode: bool = False
 
 # Drop target state: index = physical drop; False = up, True = down
 drop_targets_down = [False, False, False]
-# Jackpot reset: fire once on the edge when all 3 become down; re-arm when any comes up.
+# Jackpot reset: fire once when all 3 are down and armed; re-arm when any comes up.
 drop_target_reset_armed: bool = True
-all_drop_targets_down_since: float | None = None
-# Edge latch: tracks whether the previous scan already had all three targets down.
-drop_targets_all_down_last_scan: bool = False
 # After a commanded reset pulse at game start, block auto-reset until we first observe
 # at least one target in the UP state. This prevents the startup double-pulse.
 drop_target_waiting_for_bank_up: bool = False
 drop_target_auto_reset_enabled_at: float = 0.0
 last_jackpot_reset_pulse_mono: float = 0.0
-# Live diagnostics for drop-target reset gating (shown in debug overlay).
-drop_target_last_raw_pressed: list[bool] = [False, False, False]
-drop_target_last_all_down: bool = False
-drop_target_last_should_fire: bool = False
-drop_target_last_suppress_remaining: float = 0.0
 
 # Debouncing
 last_hit: float = 0.0
@@ -340,14 +329,6 @@ def draw_layout() -> None:
                 (0, 255, 128),
             )
             SCREEN.blit(dt_dbg, (10, 70))
-            dt_dbg2 = small_font.render(
-                f"raw={drop_target_last_raw_pressed} all={drop_target_last_all_down} "
-                f"edge={drop_targets_all_down_last_scan} fire={drop_target_last_should_fire} "
-                f"sup={drop_target_last_suppress_remaining:.2f}s",
-                True,
-                (255, 255, 0),
-            )
-            SCREEN.blit(dt_dbg2, (10, 100))
         pygame.draw.rect(SCREEN, (255, 0, 0), cutout_rect, 2)
         step_x = cutout_rect.width // 10
         step_y = cutout_rect.height // 5
@@ -442,17 +423,14 @@ def on_goal_scored() -> None:
 
 
 def on_drop_target_hit() -> None:
-    """Scan drop targets; pulse reset once when all 3 transition to down."""
-    global drop_targets_down, drop_target_reset_armed, all_drop_targets_down_since
-    global drop_targets_all_down_last_scan, drop_target_waiting_for_bank_up
+    """Scan drop targets; pulse reset when all 3 are down and armed."""
+    global drop_targets_down, drop_target_reset_armed
+    global drop_target_waiting_for_bank_up
     global drop_target_auto_reset_enabled_at
     global last_jackpot_reset_pulse_mono
-    global drop_target_last_raw_pressed, drop_target_last_all_down
-    global drop_target_last_should_fire, drop_target_last_suppress_remaining
     global target1_last_state, target2_last_state, target3_last_state
 
     raw_pressed = [target1.is_pressed, target2.is_pressed, target3.is_pressed]
-    drop_target_last_raw_pressed = raw_pressed.copy()
     for i, p in enumerate(raw_pressed):
         drop_targets_down[i] = p if DROP_TARGET_PRESSED_WHEN_DOWN else not p
 
@@ -460,14 +438,9 @@ def on_drop_target_hit() -> None:
 
     # Use normalized physical-down mapping directly for robustness across wiring polarity.
     all_down = all(drop_targets_down)
-    drop_target_last_all_down = all_down
     now_mono = time.monotonic()
-    drop_target_last_suppress_remaining = max(0.0, drop_target_auto_reset_enabled_at - now_mono)
-    drop_target_last_should_fire = False
 
     if not all_down:
-        drop_targets_all_down_last_scan = False
-        all_drop_targets_down_since = None
         # Seeing any target up means startup gating is satisfied.
         drop_target_waiting_for_bank_up = False
         drop_target_reset_armed = True
@@ -482,19 +455,14 @@ def on_drop_target_hit() -> None:
         return
 
     # Fire when all-down and armed; disarm after pulse, then re-arm when any target comes up.
-    should_fire = drop_target_reset_armed
-    drop_target_last_should_fire = should_fire
-
-    if should_fire and now_mono - last_jackpot_reset_pulse_mono >= JACKPOT_RESET_COOLDOWN:
+    if drop_target_reset_armed and now_mono - last_jackpot_reset_pulse_mono >= JACKPOT_RESET_COOLDOWN:
         last_jackpot_reset_pulse_mono = now_mono
         drop_target_reset_armed = False
-        all_drop_targets_down_since = None
         threading.Thread(
             target=pulse_solenoid,
             args=(jackpot_gate, JACKPOT_GATE_PULSE_TIME),
             daemon=True,
         ).start()
-    drop_targets_all_down_last_scan = True
 
 
 def on_ball_drained() -> None:
@@ -523,13 +491,11 @@ def sync_goal_sensor_edge_after_reset() -> None:
 
 def sync_drop_targets_after_reset() -> None:
     """Clear jackpot-reset edge bookkeeping after a game reset (must run with GPIO; mirrors column read)."""
-    global drop_target_reset_armed, drop_targets_down, all_drop_targets_down_since
-    global drop_targets_all_down_last_scan, drop_target_waiting_for_bank_up
+    global drop_target_reset_armed, drop_targets_down
+    global drop_target_waiting_for_bank_up
     if not USE_GPIO:
         drop_target_reset_armed = True
-        drop_targets_all_down_last_scan = False
         drop_target_waiting_for_bank_up = False
-        all_drop_targets_down_since = None
         return
     col.on()
     time.sleep(0.002)
@@ -541,9 +507,7 @@ def sync_drop_targets_after_reset() -> None:
     # so suppress expiry does not cause an immediate second pulse.
     bank_all_down = all(drop_targets_down)
     drop_target_reset_armed = not bank_all_down
-    drop_targets_all_down_last_scan = bank_all_down
     drop_target_waiting_for_bank_up = bank_all_down
-    all_drop_targets_down_since = None
     # Note: do not clear drop_target_auto_reset_enabled_at here — it must stay set after
     # fire_drop_target_reset() or the game-start suppress window is wiped and jackpot fires twice.
 
@@ -825,8 +789,8 @@ def close_hardware() -> None:
 
 def fire_drop_target_reset() -> None:
     """Pulse the drop-target reset solenoid to raise the bank (best-effort)."""
-    global last_jackpot_reset_pulse_mono, drop_target_reset_armed, all_drop_targets_down_since
-    global drop_targets_all_down_last_scan, drop_target_waiting_for_bank_up
+    global last_jackpot_reset_pulse_mono, drop_target_reset_armed
+    global drop_target_waiting_for_bank_up
     global drop_target_auto_reset_enabled_at
     if not USE_GPIO:
         return
@@ -834,9 +798,7 @@ def fire_drop_target_reset() -> None:
     last_jackpot_reset_pulse_mono = now_mono
     # Start-up/commanded pulse: disarm auto-reset until we observe at least one target up.
     drop_target_reset_armed = False
-    drop_targets_all_down_last_scan = True
     drop_target_waiting_for_bank_up = True
-    all_drop_targets_down_since = None
     drop_target_auto_reset_enabled_at = now_mono + DROP_TARGET_AUTO_RESET_SUPPRESS_TIME
     threading.Thread(
         target=pulse_solenoid,
