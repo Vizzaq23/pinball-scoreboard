@@ -179,6 +179,11 @@ all_drop_targets_down_since: float | None = None
 drop_targets_all_down_last_scan: bool = False
 drop_target_auto_reset_enabled_at: float = 0.0
 last_jackpot_reset_pulse_mono: float = 0.0
+# Live diagnostics for drop-target reset gating (shown in debug overlay).
+drop_target_last_raw_pressed: list[bool] = [False, False, False]
+drop_target_last_all_down: bool = False
+drop_target_last_should_fire: bool = False
+drop_target_last_suppress_remaining: float = 0.0
 
 # Debouncing
 last_hit: float = 0.0
@@ -332,6 +337,14 @@ def draw_layout() -> None:
                 (0, 255, 128),
             )
             SCREEN.blit(dt_dbg, (10, 70))
+            dt_dbg2 = small_font.render(
+                f"raw={drop_target_last_raw_pressed} all={drop_target_last_all_down} "
+                f"edge={drop_targets_all_down_last_scan} fire={drop_target_last_should_fire} "
+                f"sup={drop_target_last_suppress_remaining:.2f}s",
+                True,
+                (255, 255, 0),
+            )
+            SCREEN.blit(dt_dbg2, (10, 100))
         pygame.draw.rect(SCREEN, (255, 0, 0), cutout_rect, 2)
         step_x = cutout_rect.width // 10
         step_y = cutout_rect.height // 5
@@ -431,9 +444,12 @@ def on_drop_target_hit() -> None:
     global drop_targets_all_down_last_scan
     global drop_target_auto_reset_enabled_at
     global last_jackpot_reset_pulse_mono
+    global drop_target_last_raw_pressed, drop_target_last_all_down
+    global drop_target_last_should_fire, drop_target_last_suppress_remaining
     global target1_last_state, target2_last_state, target3_last_state
 
     raw_pressed = [target1.is_pressed, target2.is_pressed, target3.is_pressed]
+    drop_target_last_raw_pressed = raw_pressed.copy()
     for i, p in enumerate(raw_pressed):
         drop_targets_down[i] = p if DROP_TARGET_PRESSED_WHEN_DOWN else not p
 
@@ -441,7 +457,10 @@ def on_drop_target_hit() -> None:
 
     # Use normalized physical-down mapping directly for robustness across wiring polarity.
     all_down = all(drop_targets_down)
+    drop_target_last_all_down = all_down
     now_mono = time.monotonic()
+    drop_target_last_suppress_remaining = max(0.0, drop_target_auto_reset_enabled_at - now_mono)
+    drop_target_last_should_fire = False
 
     if not all_down:
         drop_targets_all_down_last_scan = False
@@ -455,6 +474,7 @@ def on_drop_target_hit() -> None:
 
     # Fire only on edge into all-down; no repeat while targets remain down.
     should_fire = (not drop_targets_all_down_last_scan) and drop_target_reset_armed
+    drop_target_last_should_fire = should_fire
 
     if should_fire and now_mono - last_jackpot_reset_pulse_mono >= JACKPOT_RESET_COOLDOWN:
         last_jackpot_reset_pulse_mono = now_mono
