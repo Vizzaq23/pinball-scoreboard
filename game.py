@@ -408,18 +408,18 @@ def on_drop_target_hit() -> None:
     global target1_last_state, target2_last_state, target3_last_state
 
     switches = [target1, target2, target3]
-    # Sensor is active (pressed) when target is UP, inactive (not pressed) when DOWN.
-    for i, btn in enumerate(switches):
-        drop_targets_down[i] = not btn.is_pressed
+    # Sensor is active (pressed) when target is UP, inactive when not UP (down/blocked).
+    target_up_states = [btn.is_pressed for btn in switches]
+    for i, is_up in enumerate(target_up_states):
+        drop_targets_down[i] = not is_up
 
-    target1_last_state = target1.is_pressed
-    target2_last_state = target2.is_pressed
-    target3_last_state = target3.is_pressed
+    target1_last_state, target2_last_state, target3_last_state = target_up_states
 
-    all_down = all(drop_targets_down)
+    # Explicit condition requested: trigger reset when no target is UP.
+    all_not_up = not any(target_up_states)
     now_mono = time.monotonic()
 
-    if not all_down:
+    if not all_not_up:
         all_drop_targets_down_since = None
         drop_target_reset_armed = True
         return
