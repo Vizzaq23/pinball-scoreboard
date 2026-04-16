@@ -166,10 +166,10 @@ collected: int = 0  # PIONEER progress (0–len(PIONEER_LETTERS))
 mega_jackpot: bool = False
 debug_mode: bool = False
 
-# Drop target state: index = physical drop; False = up, True = down
+# Drop target state: index = physical target; False = up, True = down (same sense as test mode UP/DOWN).
 drop_targets_down = [False, False, False]
-# Jackpot reset: fire once when all 3 are down and armed; re-arm when any comes up.
-drop_target_reset_armed: bool = True
+# Previous scan was all-down — used to fire reset once on rising edge to "all three down".
+drop_target_prev_all_down: bool = False
 last_jackpot_reset_pulse_mono: float = 0.0
 
 # Debouncing
@@ -316,7 +316,7 @@ def draw_layout() -> None:
     if debug_mode:
         if USE_GPIO:
             dt_dbg = small_font.render(
-                f"DT down={drop_targets_down} armed={drop_target_reset_armed} "
+                f"DT down={drop_targets_down} prev_all_down={drop_target_prev_all_down} "
                 f"DOWN=pressed:{DROP_TARGET_PRESSED_WHEN_DOWN}",
                 True,
                 (0, 255, 128),
@@ -407,15 +407,14 @@ def on_goal_scored() -> None:
 
 
 def trigger_drop_target_reset(source: str) -> bool:
-    """Single place that fires the drop-target reset coil (jackpot_gate). Returns True if pulsed."""
-    global last_jackpot_reset_pulse_mono, drop_target_reset_armed
+    """Pulse jackpot_gate (drop-target bank reset). Debounced by JACKPOT_RESET_COOLDOWN."""
+    global last_jackpot_reset_pulse_mono
     if not USE_GPIO:
         return False
     now_mono = time.monotonic()
     if now_mono - last_jackpot_reset_pulse_mono < JACKPOT_RESET_COOLDOWN:
         return False
     last_jackpot_reset_pulse_mono = now_mono
-    drop_target_reset_armed = False
     print(f"[drop_target] RESET FIRE source={source!r}")
     threading.Thread(
         target=pulse_solenoid,
@@ -426,27 +425,26 @@ def trigger_drop_target_reset(source: str) -> bool:
 
 
 def on_drop_target_hit() -> None:
-    """Read drop-target switches; auto-reset when all 3 are down and armed; re-arm when any rises."""
-    global drop_targets_down, drop_target_reset_armed
+    """Read targets like test mode (pressed=UP); when all three are down, pulse jackpot_gate once per knockdown."""
+    global drop_targets_down, drop_target_prev_all_down
 
+    # Same normalization as SWITCH TEST: pressed -> UP, not pressed -> DOWN (see DROP_TARGET_PRESSED_WHEN_DOWN).
     raw_pressed = [target1.is_pressed, target2.is_pressed, target3.is_pressed]
     for i, p in enumerate(raw_pressed):
         drop_targets_down[i] = p if DROP_TARGET_PRESSED_WHEN_DOWN else not p
 
     all_down = all(drop_targets_down)
-    now_mono = time.monotonic()
     if debug_mode:
+        edge = all_down and not drop_target_prev_all_down
         print(
-            f"[drop_target] raw={raw_pressed} norm={list(drop_targets_down)} "
-            f"all_down={all_down} armed={drop_target_reset_armed}"
+            f"[drop_target] raw={raw_pressed} down={list(drop_targets_down)} "
+            f"all_down={all_down} edge_to_all_down={edge}"
         )
 
-    if not all_down:
-        drop_target_reset_armed = True
-        return
-
-    if drop_target_reset_armed and now_mono - last_jackpot_reset_pulse_mono >= JACKPOT_RESET_COOLDOWN:
+    if all_down and not drop_target_prev_all_down:
         trigger_drop_target_reset("all_down")
+
+    drop_target_prev_all_down = all_down
 
 
 def on_ball_drained() -> None:
@@ -479,10 +477,10 @@ def sync_goal_sensor_edge_after_reset() -> None:
 
 
 def sync_drop_targets_after_reset() -> None:
-    """Align drop-target bookkeeping after a game reset (must run with GPIO; mirrors column read)."""
-    global drop_target_reset_armed, drop_targets_down
+    """Refresh drop-target state after a game reset so we do not treat it as a new all-down edge."""
+    global drop_targets_down, drop_target_prev_all_down
     if not USE_GPIO:
-        drop_target_reset_armed = True
+        drop_target_prev_all_down = False
         return
     col.on()
     time.sleep(0.002)
@@ -490,9 +488,7 @@ def sync_drop_targets_after_reset() -> None:
     for i, p in enumerate(raw_pressed):
         drop_targets_down[i] = p if DROP_TARGET_PRESSED_WHEN_DOWN else not p
     col.off()
-    bank_all_down = all(drop_targets_down)
-    # If the bank still reads all-down after a commanded pulse, stay disarmed until one target reads up.
-    drop_target_reset_armed = not bank_all_down
+    drop_target_prev_all_down = all(drop_targets_down)
 
 
 def poll_hardware_inputs() -> None:
