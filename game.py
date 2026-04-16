@@ -413,6 +413,9 @@ def trigger_drop_target_reset(source: str) -> bool:
         return False
     now_mono = time.monotonic()
     if now_mono - last_jackpot_reset_pulse_mono < JACKPOT_RESET_COOLDOWN:
+        if debug_mode:
+            remain = JACKPOT_RESET_COOLDOWN - (now_mono - last_jackpot_reset_pulse_mono)
+            print(f"[drop_target] RESET skipped (cooldown) source={source!r} wait ~{remain:.2f}s")
         return False
     last_jackpot_reset_pulse_mono = now_mono
     print(f"[drop_target] RESET FIRE source={source!r}")
@@ -441,10 +444,15 @@ def on_drop_target_hit() -> None:
             f"all_down={all_down} edge_to_all_down={edge}"
         )
 
-    if all_down and not drop_target_prev_all_down:
-        trigger_drop_target_reset("all_down")
-
-    drop_target_prev_all_down = all_down
+    # Rising edge to all-down: request reset. If trigger is blocked by JACKPOT_RESET_COOLDOWN
+    # (e.g. right after startup/restart pulse), do NOT set prev_all_down — retry next frame.
+    if not all_down:
+        drop_target_prev_all_down = False
+    elif not drop_target_prev_all_down:
+        if trigger_drop_target_reset("all_down"):
+            drop_target_prev_all_down = True
+    else:
+        drop_target_prev_all_down = True
 
 
 def on_ball_drained() -> None:
