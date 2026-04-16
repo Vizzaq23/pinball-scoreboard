@@ -472,8 +472,8 @@ def on_drop_target_hit() -> None:
     if now_mono < drop_target_auto_reset_enabled_at:
         return
 
-    # Fire only on edge into all-down; no repeat while targets remain down.
-    should_fire = (not drop_targets_all_down_last_scan) and drop_target_reset_armed
+    # Fire when all-down and armed; disarm after pulse, then re-arm when any target comes up.
+    should_fire = drop_target_reset_armed
     drop_target_last_should_fire = should_fire
 
     if should_fire and now_mono - last_jackpot_reset_pulse_mono >= JACKPOT_RESET_COOLDOWN:
@@ -818,8 +818,8 @@ def fire_drop_target_reset() -> None:
         return
     now_mono = time.monotonic()
     last_jackpot_reset_pulse_mono = now_mono
-    # Start-up/commanded pulse: disarm auto-reset briefly so we don't double-fire.
-    drop_target_reset_armed = True
+    # Start-up/commanded pulse: disarm auto-reset until we observe at least one target up.
+    drop_target_reset_armed = False
     drop_targets_all_down_last_scan = True
     all_drop_targets_down_since = None
     drop_target_auto_reset_enabled_at = now_mono + DROP_TARGET_AUTO_RESET_SUPPRESS_TIME
