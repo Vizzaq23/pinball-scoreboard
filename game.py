@@ -11,6 +11,7 @@ import pygame
 from assets import load_font, load_image
 from audio import play_sound, start_music
 from hardware import (
+    DROP_TARGET_PRESSED_WHEN_DOWN,
     USE_GPIO,
     ball_drain,
     bumper1,
@@ -321,6 +322,14 @@ def draw_layout() -> None:
 
     # Debug overlay (jumbotron grid)
     if debug_mode:
+        if USE_GPIO:
+            dt_dbg = small_font.render(
+                f"DT down={drop_targets_down} armed={drop_target_reset_armed} "
+                f"DOWN=pressed:{DROP_TARGET_PRESSED_WHEN_DOWN}",
+                True,
+                (0, 255, 128),
+            )
+            SCREEN.blit(dt_dbg, (10, 70))
         pygame.draw.rect(SCREEN, (255, 0, 0), cutout_rect, 2)
         step_x = cutout_rect.width // 10
         step_y = cutout_rect.height // 5
@@ -343,6 +352,16 @@ def draw_layout() -> None:
 # ============================================================
 # GAME LOGIC / EVENT HANDLERS
 # ============================================================
+
+
+def _all_drop_targets_physically_down(raw_pressed: list[bool]) -> bool:
+    """True when all three targets are physically down (depends on DROP_TARGET_PRESSED_WHEN_DOWN)."""
+    if len(raw_pressed) != 3:
+        return False
+    if DROP_TARGET_PRESSED_WHEN_DOWN:
+        return all(raw_pressed)
+    return not any(raw_pressed)
+
 
 def on_target_hit() -> None:
     """Strike plate hit: award points with cooldown."""
@@ -411,22 +430,19 @@ def on_drop_target_hit() -> None:
     global last_jackpot_reset_pulse_mono
     global target1_last_state, target2_last_state, target3_last_state
 
-    switches = [target1, target2, target3]
-    # Sensor is active (pressed) when target is UP, inactive when not UP (down/blocked).
-    target_up_states = [btn.is_pressed for btn in switches]
-    for i, is_up in enumerate(target_up_states):
-        drop_targets_down[i] = not is_up
+    raw_pressed = [target1.is_pressed, target2.is_pressed, target3.is_pressed]
+    for i, p in enumerate(raw_pressed):
+        drop_targets_down[i] = p if DROP_TARGET_PRESSED_WHEN_DOWN else not p
 
-    target1_last_state, target2_last_state, target3_last_state = target_up_states
+    target1_last_state, target2_last_state, target3_last_state = raw_pressed
 
-    # Explicit condition requested: trigger reset when no target is UP.
-    all_not_up = not any(target_up_states)
+    all_down = _all_drop_targets_physically_down(raw_pressed)
     now_mono = time.monotonic()
 
     if now_mono < drop_target_auto_reset_enabled_at:
         return
 
-    if not all_not_up:
+    if not all_down:
         all_drop_targets_down_since = None
         drop_target_reset_armed = True
         return
@@ -477,20 +493,20 @@ def sync_goal_sensor_edge_after_reset() -> None:
 def sync_drop_targets_after_reset() -> None:
     """Clear jackpot-reset edge bookkeeping after a game reset (must run with GPIO; mirrors column read)."""
     global drop_target_reset_armed, drop_targets_down, all_drop_targets_down_since
-    global drop_target_auto_reset_enabled_at
     if not USE_GPIO:
         drop_target_reset_armed = True
         all_drop_targets_down_since = None
-        drop_target_auto_reset_enabled_at = 0.0
         return
     col.on()
     time.sleep(0.002)
-    for i, btn in enumerate((target1, target2, target3)):
-        drop_targets_down[i] = not btn.is_pressed
+    raw_pressed = [target1.is_pressed, target2.is_pressed, target3.is_pressed]
+    for i, p in enumerate(raw_pressed):
+        drop_targets_down[i] = p if DROP_TARGET_PRESSED_WHEN_DOWN else not p
     col.off()
     drop_target_reset_armed = True
     all_drop_targets_down_since = None
-    drop_target_auto_reset_enabled_at = 0.0
+    # Note: do not clear drop_target_auto_reset_enabled_at here — it must stay set after
+    # fire_drop_target_reset() or the game-start suppress window is wiped and jackpot fires twice.
 
 
 def poll_hardware_inputs() -> None:
@@ -656,6 +672,7 @@ def handle_pygame_events() -> bool:
     """
     global score, balls_left, collected, mega_jackpot, debug_mode
     global pioneer_flash_index, pioneer_flash_until, score_pop_until, mega_jackpot_until
+    global drop_target_auto_reset_enabled_at
 
     for e in pygame.event.get():
         if e.type == pygame.QUIT:
@@ -698,6 +715,7 @@ def handle_pygame_events() -> bool:
                 mega_jackpot_until = 0.0
                 sync_goal_sensor_edge_after_reset()
                 sync_drop_targets_after_reset()
+                drop_target_auto_reset_enabled_at = 0.0
             elif e.key == pygame.K_d:
                 # Toggle debug overlay
                 debug_mode = not debug_mode

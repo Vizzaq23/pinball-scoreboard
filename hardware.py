@@ -9,6 +9,10 @@ from typing import Any
 # Serialize coil pulses so two drivers never energize at once (power / thermal headroom).
 _solenoid_lock = threading.Lock()
 
+# Drop targets: set True if gpiozero "pressed" means the target is physically DOWN (switch closed
+# on drop). Set False if pressed means UP (original schematic: open when down).
+DROP_TARGET_PRESSED_WHEN_DOWN = True
+
 # ---------------------------------------------------------------------------
 # GPIO setup (cross-platform safe)
 # ---------------------------------------------------------------------------
