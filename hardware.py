@@ -10,8 +10,8 @@ from typing import Any
 _solenoid_lock = threading.Lock()
 
 # Drop targets: True = gpiozero "pressed" is closed when the target is physically DOWN.
-# Set to False only if your hardware reads pressed when targets are UP.
-DROP_TARGET_PRESSED_WHEN_DOWN = True
+# Set to False if your hardware reads pressed when targets are UP (your current behavior).
+DROP_TARGET_PRESSED_WHEN_DOWN = False
 
 # ---------------------------------------------------------------------------
 # GPIO setup (cross-platform safe)
