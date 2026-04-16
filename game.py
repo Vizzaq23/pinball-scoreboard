@@ -63,6 +63,8 @@ POINTS_MEGA_JACKPOT = 10_000
 HIT_COOLDOWN = 0.4
 BUMPER_COOLDOWN = 0.3
 GOAL_COOLDOWN = 0.75
+# Popper: goal switch stays closed while the ball is in the pocket; require this much continuous press.
+GOAL_POPPER_HOLD_S = 2.0
 SOLENOID_PULSE_TIME = 0.1
 JACKPOT_GATE_PULSE_TIME = 0.60
 # Minimum time between jackpot-reset coil pulses (debounces switch chatter).
@@ -76,8 +78,6 @@ PIONEER_FLASH_DURATION = 0.4
 MEGA_JACKPOT_DURATION = 1.5
 MEGA_JACKPOT_FLASH_DURATION = 0.35
 
-# Delay before firing the goal popper after goal sensor goes high.
-GOAL_POPPER_DELAY = 2.0
 # After the last ball drains (game over), fire the kicker this many times, this many seconds apart.
 GAME_OVER_KICK_COUNT = 2
 GAME_OVER_KICK_INTERVAL_S = 2.0
@@ -181,9 +181,11 @@ last_bumper_hit: dict = {1: 0.0, 2: 0.0}
 # Track previous state of the drain switch to detect edges
 ball_drain_last_state: bool = False
 
-# Goal: edge detect + cooldown (stuck/bouncy switches)
+# Goal: edge detect + cooldown (stuck/bouncy switches); dwell timing for popper (see GOAL_POPPER_HOLD_S).
 goal_sensor_last_state: bool = False
 last_goal_time: float = 0.0
+goal_dwell_start_mono: float | None = None
+goal_popper_fired_this_hold: bool = False
 
 # For uptime / status display
 program_start_time = time.time()
@@ -392,13 +394,6 @@ def on_goal_scored() -> None:
 
     play_sound("jackpot")
 
-    # After a short delay, fire the popper solenoid once to pop the ball up the ramp.
-    def _delayed_popper() -> None:
-        time.sleep(GOAL_POPPER_DELAY)
-        pulse_solenoid(popper_gate, POPPER_PULSE_TIME)
-
-    threading.Thread(target=_delayed_popper, daemon=True).start()
-
     if collected == len(PIONEER_LETTERS):
         mega_jackpot = True
         mega_jackpot_until = time.time() + MEGA_JACKPOT_DURATION
@@ -478,12 +473,17 @@ def on_ball_drained() -> None:
 
 def sync_goal_sensor_edge_after_reset() -> None:
     """After a full game reset, align edge state with the switch so a held sensor is not a new edge."""
-    global goal_sensor_last_state, last_goal_time
+    global goal_sensor_last_state, last_goal_time, goal_dwell_start_mono, goal_popper_fired_this_hold
     last_goal_time = 0.0
+    goal_popper_fired_this_hold = False
     if USE_GPIO:
         goal_sensor_last_state = goal_sensor.is_pressed
+        goal_dwell_start_mono = (
+            time.monotonic() if goal_sensor_last_state else None
+        )
     else:
         goal_sensor_last_state = False
+        goal_dwell_start_mono = None
 
 
 def sync_drop_targets_after_reset() -> None:
@@ -506,6 +506,7 @@ def sync_drop_targets_after_reset() -> None:
 def poll_hardware_inputs() -> None:
     """Read GPIO inputs and dispatch to game handlers."""
     global ball_drain_last_state, goal_sensor_last_state, last_goal_time
+    global goal_dwell_start_mono, goal_popper_fired_this_hold
 
     if not USE_GPIO:
         return
@@ -528,16 +529,32 @@ def poll_hardware_inputs() -> None:
     if DROP_TARGET_USE_COL_FOR_READ:
         col.off()
 
-    # Goal: edge (press) + cooldown — avoids runaway scoring on sticky/bouncy switches
+    # Goal: edge (press) + cooldown — avoids runaway scoring on sticky/bouncy switches.
+    # Popper: after the switch has been held closed for GOAL_POPPER_HOLD_S (ball in pocket).
     current_goal = goal_sensor.is_pressed
     now = time.time()
-    if (
-        current_goal
-        and not goal_sensor_last_state
-        and now - last_goal_time >= GOAL_COOLDOWN
+    now_m = time.monotonic()
+    rising_goal = current_goal and not goal_sensor_last_state
+    if rising_goal:
+        goal_dwell_start_mono = now_m
+        goal_popper_fired_this_hold = False
+        if now - last_goal_time >= GOAL_COOLDOWN:
+            on_goal_scored()
+            last_goal_time = now
+    if not current_goal:
+        goal_dwell_start_mono = None
+        goal_popper_fired_this_hold = False
+    elif (
+        goal_dwell_start_mono is not None
+        and not goal_popper_fired_this_hold
+        and now_m - goal_dwell_start_mono >= GOAL_POPPER_HOLD_S
     ):
-        on_goal_scored()
-        last_goal_time = now
+        goal_popper_fired_this_hold = True
+        threading.Thread(
+            target=pulse_solenoid,
+            args=(popper_gate, POPPER_PULSE_TIME),
+            daemon=True,
+        ).start()
     goal_sensor_last_state = current_goal
 
     # --- BALL DRAIN SENSOR ---
