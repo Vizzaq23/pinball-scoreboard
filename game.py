@@ -676,6 +676,7 @@ def check_game_over() -> None:
         pioneer_flash_until = 0.0
         mega_jackpot_until = 0.0
         sync_goal_sensor_edge_after_reset()
+        fire_drop_target_reset()
 
 
 def render_frame() -> None:
@@ -687,6 +688,10 @@ def render_frame() -> None:
 
 def close_hardware() -> None:
     """Release all GPIO/hardware resources."""
+    if USE_GPIO:
+        # Leave all coil outputs de-energized before releasing pins (avoids exit glitches).
+        for out in (gate1, gate2, col, jackpot_gate, popper_gate, ball_kicker_gate):
+            out.off()
     for device in (
         targets_any,
         bumper1,
@@ -703,8 +708,21 @@ def close_hardware() -> None:
         col,
         service_button,
         start_button,
+        ball_kicker_gate,
     ):
         device.close()
+
+
+def fire_drop_target_reset() -> None:
+    """Pulse the drop-target reset solenoid to raise the bank (best-effort)."""
+    if not USE_GPIO:
+        return
+    threading.Thread(
+        target=pulse_solenoid,
+        args=(jackpot_gate, JACKPOT_GATE_PULSE_TIME),
+        daemon=True,
+    ).start()
+    time.sleep(DROP_TARGET_RESET_DELAY)
 
 
 # ============================================================
@@ -717,16 +735,6 @@ def main() -> None:
     global current_mode, mega_jackpot, collected, mega_jackpot_until
 
     initialize_all_gates()
-    # Ensure the 3‑target drop bank starts with all targets in the UP position.
-    # This fires the reset solenoid once at startup so any targets left down
-    # from a previous power cycle are raised.
-    if USE_GPIO:
-        threading.Thread(
-            target=pulse_solenoid,
-            args=(jackpot_gate, JACKPOT_GATE_PULSE_TIME),
-            daemon=True,
-        ).start()
-        time.sleep(DROP_TARGET_RESET_DELAY)
     start_music()
     chosen_mode = show_start_screen()
 
@@ -750,6 +758,8 @@ def main() -> None:
         chosen_mode = show_start_screen()
 
     current_mode = SystemMode.GAMEPLAY_MODE
+    # Raise the drop-target bank at the start of each new game.
+    fire_drop_target_reset()
     running = True
     while running:
         # End MEGA JACKPOT display after duration
