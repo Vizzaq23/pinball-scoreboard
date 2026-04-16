@@ -13,6 +13,12 @@ _solenoid_lock = threading.Lock()
 # Set to False if your hardware reads pressed when targets are UP (your current behavior).
 DROP_TARGET_PRESSED_WHEN_DOWN = False
 
+# SWITCH TEST reads target1/2/3 with col OFF. Gameplay used to turn COL_PIN on for the whole poll,
+# which can change opto readings so "all down" never matches. Default False = same as test mode.
+# Set True only if your board needs GPIO COL_PIN high to power IR emitters while reading.
+DROP_TARGET_USE_COL_FOR_READ = False
+DROP_TARGET_COL_SETTLE_S = 0.005
+
 # ---------------------------------------------------------------------------
 # GPIO setup (cross-platform safe)
 # ---------------------------------------------------------------------------

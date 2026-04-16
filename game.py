@@ -11,7 +11,9 @@ import pygame
 from assets import load_font, load_image
 from audio import play_sound, start_music
 from hardware import (
+    DROP_TARGET_COL_SETTLE_S,
     DROP_TARGET_PRESSED_WHEN_DOWN,
+    DROP_TARGET_USE_COL_FOR_READ,
     USE_GPIO,
     ball_drain,
     bumper1,
@@ -317,7 +319,7 @@ def draw_layout() -> None:
         if USE_GPIO:
             dt_dbg = small_font.render(
                 f"DT down={drop_targets_down} prev_all_down={drop_target_prev_all_down} "
-                f"DOWN=pressed:{DROP_TARGET_PRESSED_WHEN_DOWN}",
+                f"col_read={DROP_TARGET_USE_COL_FOR_READ} DOWN=pressed:{DROP_TARGET_PRESSED_WHEN_DOWN}",
                 True,
                 (0, 255, 128),
             )
@@ -490,12 +492,14 @@ def sync_drop_targets_after_reset() -> None:
     if not USE_GPIO:
         drop_target_prev_all_down = False
         return
-    col.on()
-    time.sleep(0.002)
+    if DROP_TARGET_USE_COL_FOR_READ:
+        col.on()
+        time.sleep(DROP_TARGET_COL_SETTLE_S)
     raw_pressed = [target1.is_pressed, target2.is_pressed, target3.is_pressed]
     for i, p in enumerate(raw_pressed):
         drop_targets_down[i] = p if DROP_TARGET_PRESSED_WHEN_DOWN else not p
-    col.off()
+    if DROP_TARGET_USE_COL_FOR_READ:
+        col.off()
     drop_target_prev_all_down = all(drop_targets_down)
 
 
@@ -506,24 +510,23 @@ def poll_hardware_inputs() -> None:
     if not USE_GPIO:
         return
 
-    # "Activate" the column each scan (Arduino: digitalWrite(colPin, LOW);)
-    col.on()
-    time.sleep(0.002)  # 2ms delay for IR LED stabilization
-
-    # Strike plate / main target (simple level read with a short cooldown inside handler)
+    # Strike plate / bumpers (do not tie to IR column — matches typical wiring)
     if targets_any.is_pressed:
         on_target_hit()
 
-    # Bumpers (simple reads; cooldown handled in on_bumper_hit)
     if bumper1.is_pressed:
         on_bumper_hit(1)
 
     if bumper2.is_pressed:
         on_bumper_hit(2)
 
-    # Drop targets: scan & handle all 3 inside on_drop_target_hit()
+    # Drop targets: same conditions as test_mode SWITCH TEST (col off unless DROP_TARGET_USE_COL_FOR_READ).
+    if DROP_TARGET_USE_COL_FOR_READ:
+        col.on()
+        time.sleep(DROP_TARGET_COL_SETTLE_S)
     on_drop_target_hit()
-    col.off()  # Turn off column after reading drop targets
+    if DROP_TARGET_USE_COL_FOR_READ:
+        col.off()
 
     # Goal: edge (press) + cooldown — avoids runaway scoring on sticky/bouncy switches
     current_goal = goal_sensor.is_pressed
