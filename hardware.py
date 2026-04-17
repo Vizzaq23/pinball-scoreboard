@@ -96,7 +96,7 @@ try:
 
     # Popper / goal solenoid that fires when jackpot sensor (goal_sensor) is hit
     # to pop the ball up to a ramp. The "goal gate" uses the same physical coil.
-    POPPER_GATE = 25
+    POPPER_GATE = 14
     popper_gate = DigitalOutputDevice(
         POPPER_GATE, active_high=POPPER_GATE_ACTIVE_HIGH, initial_value=False
     )
