@@ -41,6 +41,7 @@ _FIRE_KEYS = (
     pygame.K_SPACE,
     pygame.K_RETURN,
     getattr(pygame, "K_KP_ENTER", pygame.K_RETURN),
+    getattr(pygame, "K_RETURN2", pygame.K_RETURN),
 )
 
 SWITCH_LIST = [
@@ -60,7 +61,8 @@ SOLENOID_LIST = [
     # Jackpot reset coil needs a longer, stronger pull to fully lift the drop‑target bank.
     # Using a longer pulse here only in test mode so gameplay timing remains unchanged.
     ("Jackpot Reset", jackpot_gate, 0.25),
-    ("Popper (Ramp)", popper_gate, TEST_SOLENOID_PULSE_TIME),
+    # Popper needs a longer hold than bumper coils to reliably kick the ball.
+    ("Popper (Ramp)", popper_gate, 0.8),
     ("Ball Kicker ", ball_kicker_gate, TEST_SOLENOID_PULSE_TIME),
 ]
 

@@ -19,9 +19,11 @@ DROP_TARGET_PRESSED_WHEN_DOWN = False
 DROP_TARGET_USE_COL_FOR_READ = False
 DROP_TARGET_COL_SETTLE_S = 0.005
 
-# Coil driver polarity. Most MOSFET gates are active-high, but some relay/driver channels are active-low.
-# If your popper energizes at boot and holds ON, keep this False.
-POPPER_GATE_ACTIVE_HIGH = False
+# Coil driver polarity. Typical MOSFET gate drivers are active-high:
+# - gate.off() drives LOW (coil de-energized)
+# - gate.on() drives HIGH (coil energized)
+# Using active_low here can keep a coil energized in the "off" state.
+POPPER_GATE_ACTIVE_HIGH = True
 
 # ---------------------------------------------------------------------------
 # GPIO setup (cross-platform safe)
