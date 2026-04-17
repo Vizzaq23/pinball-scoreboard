@@ -19,6 +19,10 @@ DROP_TARGET_PRESSED_WHEN_DOWN = False
 DROP_TARGET_USE_COL_FOR_READ = False
 DROP_TARGET_COL_SETTLE_S = 0.005
 
+# Coil driver polarity. Most MOSFET gates are active-high, but some relay/driver channels are active-low.
+# If your popper energizes at boot and holds ON, keep this False.
+POPPER_GATE_ACTIVE_HIGH = False
+
 # ---------------------------------------------------------------------------
 # GPIO setup (cross-platform safe)
 # ---------------------------------------------------------------------------
@@ -92,7 +96,7 @@ try:
     # to pop the ball up to a ramp. The "goal gate" uses the same physical coil.
     POPPER_GATE = 25
     popper_gate = DigitalOutputDevice(
-        POPPER_GATE, active_high=True, initial_value=False
+        POPPER_GATE, active_high=POPPER_GATE_ACTIVE_HIGH, initial_value=False
     )
     # Explicitly ensure gate is OFF immediately after initialization
     popper_gate.off()
