@@ -541,6 +541,10 @@ def poll_hardware_inputs() -> None:
         if now - last_goal_time >= GOAL_COOLDOWN:
             on_goal_scored()
             last_goal_time = now
+    elif current_goal and goal_dwell_start_mono is None:
+        # Fallback: if we ever miss the edge transition, still allow
+        # "held for GOAL_POPPER_HOLD_S" behavior to arm and fire.
+        goal_dwell_start_mono = now_m
     if not current_goal:
         goal_dwell_start_mono = None
         goal_popper_fired_this_hold = False
