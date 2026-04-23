@@ -64,8 +64,8 @@ try:
     TARGET1_PIN = 12
     TARGET2_PIN = 13
     TARGET3_PIN = 16
-    # Start button uses 19; column IR was moved to 27 (see START_BUTTON_PIN).
-    COL_PIN = 27  # optional: drives common IR LED column
+    # Start button is on 4; popper is on 27. Optional column IR (rarely used) on 11.
+    COL_PIN = 11  # optional: drives common IR LED column
 
     target1 = Button(TARGET1_PIN, pull_up=True, bounce_time=0.1)
     target2 = Button(TARGET2_PIN, pull_up=True, bounce_time=0.1)
@@ -97,7 +97,7 @@ try:
 
     # Popper / goal solenoid that fires when jackpot sensor (goal_sensor) is hit
     # to pop the ball up to a ramp. The "goal gate" uses the same physical coil.
-    POPPER_GATE = 11
+    POPPER_GATE = 27
     popper_gate = DigitalOutputDevice(
         POPPER_GATE, active_high=POPPER_GATE_ACTIVE_HIGH, initial_value=False
     )
@@ -119,7 +119,7 @@ try:
 
     # Start game from attract / restart after game over (optional hardware)
     # Wire a momentary switch between this pin and GND (same wiring as service button).
-    START_BUTTON_PIN = 19
+    START_BUTTON_PIN = 4
     start_button = Button(START_BUTTON_PIN, pull_up=True, bounce_time=0.15)
 
     # BCM numbers for all N-MOS / coil gate outputs (kept off the bus at process exit).
