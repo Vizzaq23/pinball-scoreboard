@@ -68,6 +68,8 @@ SOLENOID_PULSE_TIME = 0.1
 JACKPOT_GATE_PULSE_TIME = 0.60
 # Minimum time between jackpot-reset coil pulses (debounces switch chatter).
 JACKPOT_RESET_COOLDOWN = 0.75
+# After a goal is scored, pulse the drop-target bank reset coil after this delay (not on all targets down).
+DROP_TARGET_RESET_AFTER_GOAL_S = 10.0
 POPPER_PULSE_TIME = 0.8
 BLINK_INTERVAL_MS = 500
 FADE_STEP_START = 6
@@ -169,9 +171,11 @@ debug_mode: bool = False
 
 # Drop target state: index = physical target; False = up, True = down (same sense as test mode UP/DOWN).
 drop_targets_down = [False, False, False]
-# Previous scan was all-down — used to fire reset once on rising edge to "all three down".
+# Previous poll: all three were down (for debug / overlay).
 drop_target_prev_all_down: bool = False
 last_jackpot_reset_pulse_mono: float = 0.0
+# When set, monotonic() time to fire the drop-target bank reset (after a goal). Reschedules on each goal.
+drop_target_reset_due_mono: float | None = None
 
 # Debouncing
 last_hit: float = 0.0
@@ -382,6 +386,7 @@ def on_bumper_hit(bumper_id: int) -> None:
 def on_goal_scored() -> None:
     """Goal sensor: award points, advance PIONEER letters, possibly trigger mega jackpot."""
     global collected, score, mega_jackpot, score_pop_until, pioneer_flash_index, pioneer_flash_until, mega_jackpot_until
+    global drop_target_reset_due_mono
     score += POINTS_GOAL
     update_high_score()
     score_pop_until = time.time() + SCORE_POP_DURATION
@@ -400,6 +405,9 @@ def on_goal_scored() -> None:
         update_high_score()
         score_pop_until = time.time() + SCORE_POP_DURATION
         play_sound("jackpot")
+
+    # Reset drop-target bank 10s after this goal (reschedules if another goal is scored first).
+    drop_target_reset_due_mono = time.monotonic() + DROP_TARGET_RESET_AFTER_GOAL_S
 
 
 def trigger_drop_target_reset(source: str) -> bool:
@@ -424,9 +432,10 @@ def trigger_drop_target_reset(source: str) -> bool:
 
 
 def on_drop_target_hit() -> None:
-    """Read targets like test mode (pressed=UP); when all three are down, pulse jackpot_gate once per knockdown."""
+    """Read targets like test mode (pressed=UP). Bank reset is timed from goals, not from all-down."""
     global drop_targets_down, drop_target_prev_all_down
 
+    was_all = drop_target_prev_all_down
     # Same normalization as SWITCH TEST: pressed -> UP, not pressed -> DOWN (see DROP_TARGET_PRESSED_WHEN_DOWN).
     raw_pressed = [target1.is_pressed, target2.is_pressed, target3.is_pressed]
     for i, p in enumerate(raw_pressed):
@@ -434,21 +443,11 @@ def on_drop_target_hit() -> None:
 
     all_down = all(drop_targets_down)
     if debug_mode:
-        edge = all_down and not drop_target_prev_all_down
         print(
             f"[drop_target] raw={raw_pressed} down={list(drop_targets_down)} "
-            f"all_down={all_down} edge_to_all_down={edge}"
+            f"all_down={all_down} edge_to_all_down={all_down and not was_all}"
         )
-
-    # Rising edge to all-down: request reset. If trigger is blocked by JACKPOT_RESET_COOLDOWN
-    # (e.g. right after startup/restart pulse), do NOT set prev_all_down — retry next frame.
-    if not all_down:
-        drop_target_prev_all_down = False
-    elif not drop_target_prev_all_down:
-        if trigger_drop_target_reset("all_down"):
-            drop_target_prev_all_down = True
-    else:
-        drop_target_prev_all_down = True
+    drop_target_prev_all_down = all_down
 
 
 def on_ball_drained() -> None:
@@ -500,6 +499,22 @@ def sync_drop_targets_after_reset() -> None:
     if DROP_TARGET_USE_COL_FOR_READ:
         col.off()
     drop_target_prev_all_down = all(drop_targets_down)
+
+
+def check_pending_drop_target_reset() -> None:
+    """Fire the drop-target bank reset when scheduled (after a goal), not on all-targets-down."""
+    global drop_target_reset_due_mono
+    if drop_target_reset_due_mono is None:
+        return
+    if time.monotonic() < drop_target_reset_due_mono:
+        return
+    if not USE_GPIO:
+        drop_target_reset_due_mono = None
+        return
+    if not trigger_drop_target_reset("after_goal"):
+        return
+    drop_target_reset_due_mono = None
+    sync_drop_targets_after_reset()
 
 
 def poll_hardware_inputs() -> None:
@@ -680,6 +695,7 @@ def handle_pygame_events() -> bool:
     """
     global score, balls_left, collected, mega_jackpot, debug_mode
     global pioneer_flash_index, pioneer_flash_until, score_pop_until, mega_jackpot_until
+    global drop_target_reset_due_mono
 
     for e in pygame.event.get():
         if e.type == pygame.QUIT:
@@ -708,6 +724,7 @@ def handle_pygame_events() -> bool:
                     update_high_score()
                     score_pop_until = time.time() + SCORE_POP_DURATION
                     play_sound("jackpot")
+                drop_target_reset_due_mono = time.monotonic() + DROP_TARGET_RESET_AFTER_GOAL_S
             elif e.key == pygame.K_b:
                 # Manual drain test
                 on_ball_drained()
@@ -722,6 +739,7 @@ def handle_pygame_events() -> bool:
                 mega_jackpot_until = 0.0
                 sync_goal_sensor_edge_after_reset()
                 sync_drop_targets_after_reset()
+                drop_target_reset_due_mono = None
             elif e.key == pygame.K_d:
                 # Toggle debug overlay
                 debug_mode = not debug_mode
@@ -742,8 +760,10 @@ def check_game_over() -> None:
     """If no balls left, show game over screen then reset game state (keep high score)."""
     global score, balls_left, collected, mega_jackpot
     global score_pop_until, pioneer_flash_index, pioneer_flash_until, mega_jackpot_until
+    global drop_target_reset_due_mono
     if balls_left <= 0:
         show_game_over_screen()
+        drop_target_reset_due_mono = None
         score = 0
         balls_left = INITIAL_BALLS
         collected = 0
@@ -804,6 +824,7 @@ def fire_drop_target_reset(source: str = "startup") -> None:
 def main() -> None:
     """Initialize hardware, run start/test/gameplay flow, then exit cleanly."""
     global current_mode, mega_jackpot, collected, mega_jackpot_until
+    global drop_target_reset_due_mono
 
     try:
         initialize_all_gates()
@@ -830,6 +851,7 @@ def main() -> None:
             chosen_mode = show_start_screen()
 
         current_mode = SystemMode.GAMEPLAY_MODE
+        drop_target_reset_due_mono = None
         # Raise the drop-target bank at the start of each new game.
         fire_drop_target_reset("startup")
         sync_drop_targets_after_reset()
@@ -841,6 +863,7 @@ def main() -> None:
                 collected = 0
             running = handle_pygame_events()
             poll_hardware_inputs()
+            check_pending_drop_target_reset()
             handle_keyboard_test_hit()
             check_game_over()
             render_frame()
