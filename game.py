@@ -26,7 +26,6 @@ from hardware import (
     jackpot_gate,
     popper_gate,
     pulse_solenoid,
-    service_button,
     start_button,
     target1,
     target2,
@@ -574,7 +573,7 @@ def poll_hardware_inputs() -> None:
 # ============================================================
 
 def show_start_screen() -> SystemMode:
-    """Attract screen. Returns GAMEPLAY_MODE to start game, TEST_MODE if service/F9 used."""
+    """Attract screen. Returns GAMEPLAY_MODE to start game, TEST_MODE if F9 used."""
     global current_mode
     current_mode = SystemMode.ATTRACT_MODE
     blink = True
@@ -604,10 +603,6 @@ def show_start_screen() -> SystemMode:
 
         pygame.display.flip()
         clock.tick(FPS)
-
-        if USE_GPIO and getattr(service_button, "is_pressed", False):
-            current_mode = SystemMode.TEST_MODE
-            return SystemMode.TEST_MODE
 
         if USE_GPIO:
             current_start = start_button.is_pressed
@@ -791,7 +786,6 @@ def close_hardware() -> None:
         target2,
         target3,
         goal_sensor,
-        service_button,
         start_button,
     ):
         device.close()

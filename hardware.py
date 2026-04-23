@@ -112,13 +112,8 @@ try:
     )
     ball_kicker_gate.off()
 
-    # Dedicated service button to enter TEST MODE (optional hardware)
-    # Wire a momentary switch between this pin and GND.
-    SERVICE_BUTTON_PIN = 14
-    service_button = Button(SERVICE_BUTTON_PIN, pull_up=True, bounce_time=0.15)
-
     # Start game from attract / restart after game over (optional hardware)
-    # Wire a momentary switch between this pin and GND (same wiring as service button).
+    # Wire a momentary switch between this pin and GND.
     START_BUTTON_PIN = 4
     start_button = Button(START_BUTTON_PIN, pull_up=True, bounce_time=0.15)
 
@@ -162,7 +157,6 @@ except Exception as e:
     target3 = MockButton()
     goal_sensor = MockButton()
     ball_drain = MockButton()
-    service_button = MockButton()
     start_button = MockButton()
 
     gate1 = MockGate()
