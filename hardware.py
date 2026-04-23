@@ -96,7 +96,7 @@ try:
 
     # Popper / goal solenoid that fires when jackpot sensor (goal_sensor) is hit
     # to pop the ball up to a ramp. The "goal gate" uses the same physical coil.
-    POPPER_GATE = 14
+    POPPER_GATE = 21
     popper_gate = DigitalOutputDevice(
         POPPER_GATE, active_high=POPPER_GATE_ACTIVE_HIGH, initial_value=False
     )
@@ -113,7 +113,7 @@ try:
 
     # Dedicated service button to enter TEST MODE (optional hardware)
     # Wire a momentary switch between this pin and GND.
-    SERVICE_BUTTON_PIN = 21
+    SERVICE_BUTTON_PIN = 14
     service_button = Button(SERVICE_BUTTON_PIN, pull_up=True, bounce_time=0.15)
 
     # Start game from attract / restart after game over (optional hardware)
