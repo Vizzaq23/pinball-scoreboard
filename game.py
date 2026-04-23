@@ -52,6 +52,9 @@ JUMBO_TOP = 50
 CUTOUT_WIDTH, CUTOUT_HEIGHT = 460, 140
 CUTOUT_OFFSET_Y = 60
 
+# Gameplay HUD in the side margins (drawn on the full-screen rink).
+HUD_ICE_GOLD = (185, 125, 0)
+
 # Scoring
 POINTS_TARGET_HIT = 100
 POINTS_BUMPER = 500
@@ -133,7 +136,7 @@ SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("SHU PIONEER ARENA")
 
 # Images
-rink_img = load_image("icerink.png", scale=(SCREEN_WIDTH, SCREEN_HEIGHT))
+rink_img = load_image("icerink.png", scale=(SCREEN_WIDTH, SCREEN_HEIGHT), background=(255, 255, 255))
 jumbo_img = load_image("jumboT.png", scale=JUMBO_SCALE)
 jumbo_x = SCREEN_WIDTH // 2 - jumbo_img.get_width() // 2
 jumbo_y = JUMBO_TOP
@@ -292,7 +295,7 @@ def draw_layout() -> None:
         scale=3 * score_scale_mult,
     )
 
-    hs_surface = small_font.render(f"HIGH SCORE: {high_score}", True, (255, 215, 0))
+    hs_surface = small_font.render(f"HIGH SCORE: {high_score}", True, HUD_ICE_GOLD)
     SCREEN.blit(hs_surface, (SCREEN_WIDTH - hs_surface.get_width() - 20, 20))
 
     draw_pioneer(
@@ -304,8 +307,9 @@ def draw_layout() -> None:
         pioneer_flash_until,
     )
 
-    balls_surface = small_font.render(f"Balls: {balls_left}", True, (255, 255, 255))
-    SCREEN.blit(balls_surface, (40, SCREEN_HEIGHT - 50))
+    balls_surface = small_font.render(f"Balls: {balls_left}", True, (0, 0, 0))
+    balls_y = SCREEN_HEIGHT - 50 - int(SCREEN_HEIGHT * 0.1)
+    SCREEN.blit(balls_surface, (40, balls_y))
 
     # MEGA JACKPOT: flash overlay then text
     if mega_jackpot and mega_jackpot_until > 0:

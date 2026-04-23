@@ -11,10 +11,16 @@ ASSET_DIR = "assets"
 def load_image(
     filename: str,
     scale: Optional[tuple[int, int]] = None,
+    background: Optional[tuple[int, int, int]] = None,
 ) -> Optional[pygame.Surface]:
     """
     Load an image from ASSET_DIR. Uses convert_alpha() for PNGs with
-    transparency so the rink and other PNGs don't get a black background.
+    transparency (unless flattened — see background).
+
+    If ``background`` is an RGB triplet, the (possibly scaled) image is
+    composited onto that color and returned as a solid surface. Use this for
+    full-screen backdrops like the rink so transparent pixels never pick up
+    the display backbuffer (e.g. a white flash after flip).
     """
     path = os.path.join(ASSET_DIR, filename)
     try:
@@ -34,6 +40,11 @@ def load_image(
     img = img.convert_alpha() if has_alpha else img.convert()
     if scale:
         img = pygame.transform.smoothscale(img, scale)
+    if background is not None:
+        base = pygame.Surface(img.get_size())
+        base.fill(background)
+        base.blit(img, (0, 0))
+        img = base.convert()
     return img
 
 
